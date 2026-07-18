@@ -9,8 +9,10 @@ import {
   updateIcdSuggestion,
 } from '../api'
 import { useAuth } from '../auth'
+import { SoapSectionDiff } from '../components/SoapSectionDiff'
 import { useDictation } from '../hooks/useDictation'
 import { useRealtimeVoice } from '../hooks/useRealtimeVoice'
+import { useSoapProposal } from '../hooks/useSoapProposal'
 import { useSoapStream } from '../hooks/useSoapStream'
 import {
   EMPTY_SOAP,
@@ -55,11 +57,23 @@ export default function EncounterWorkspacePage() {
   const { generate, streaming, error: streamError, setError: setStreamError } =
     useSoapStream(token)
 
-  const onNoteEdit = useCallback((partial: Partial<SoapNote>, _summary?: string) => {
-    setNote((prev) => ({ ...prev, ...partial }))
+  const applyProposedChanges = useCallback((changes: Partial<SoapNote>) => {
+    setNote((prev) => ({ ...prev, ...changes }))
     setDirtyFromVoice(true)
     setSaveSource('voice_session')
   }, [])
+
+  const {
+    pending: pendingProposal,
+    hasPending: hasPendingProposal,
+    pendingCount: pendingProposalCount,
+    summary: proposalSummary,
+    propose: proposeEdit,
+    confirmSection: confirmProposalSection,
+    rejectSection: rejectProposalSection,
+    confirmAll: confirmAllProposals,
+    rejectAll: rejectAllProposals,
+  } = useSoapProposal(note, applyProposedChanges)
 
   const {
     status: voiceStatus,
@@ -68,7 +82,11 @@ export default function EncounterWorkspacePage() {
     heardText,
     start: startVoice,
     stop: stopVoice,
-  } = useRealtimeVoice(token, onNoteEdit)
+  } = useRealtimeVoice(token, {
+    onProposeEdit: proposeEdit,
+    onConfirmProposal: confirmAllProposals,
+    onRejectProposal: rejectAllProposals,
+  })
 
   const dictationRegenerateTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -80,6 +98,7 @@ export default function EncounterWorkspacePage() {
       if (!trimmed) return
       setSaveError(null)
       setSaveSource('manual')
+      rejectAllProposals()
       let finalNote: SoapNote = EMPTY_SOAP
       void generate(encounter.id, trimmed, 'transcript', (n) => {
         finalNote = n
@@ -88,7 +107,7 @@ export default function EncounterWorkspacePage() {
         if (finalNote.assessment.trim()) void runIcdSuggest()
       })
     }, 1500)
-  }, [encounter, generate])
+  }, [encounter, generate, rejectAllProposals])
 
   const handleDictatedUtterance = useCallback(
     (utterance: string) => {
@@ -136,6 +155,7 @@ export default function EncounterWorkspacePage() {
           })
         }
         setVersions(enc.versions ?? [])
+        rejectAllProposals()
       })
       .catch((err) => {
         setLoadError(err instanceof Error ? err.message : 'Failed to load encounter')
@@ -218,6 +238,7 @@ export default function EncounterWorkspacePage() {
     setSaveError(null)
     setDirtyFromVoice(false)
     setSaveSource('manual')
+    rejectAllProposals()
     let finalNote: SoapNote = EMPTY_SOAP
     await generate(encounter.id, trimmed, inputType, (n) => {
       finalNote = n
@@ -430,11 +451,35 @@ export default function EncounterWorkspacePage() {
           {voiceStatus === 'live' && heardText && (
             <p className="voice-heard">Heard: “{heardText}”</p>
           )}
-          {lastSummary && <p className="voice-summary">{lastSummary}</p>}
+          {proposalSummary && <p className="voice-summary">{proposalSummary}</p>}
+          {!proposalSummary && lastSummary && <p className="voice-summary">{lastSummary}</p>}
           {voiceError && (
             <p className="error" role="alert">
               {voiceError}
             </p>
+          )}
+
+          {hasPendingProposal && (
+            <div className="pending-banner">
+              <span>
+                Pending changes — confirm to apply
+                {pendingProposalCount > 1 ? ` (${pendingProposalCount} sections)` : ''}.
+              </span>
+              {pendingProposalCount > 1 && (
+                <div className="pending-banner-actions">
+                  <button type="button" className="small" onClick={confirmAllProposals}>
+                    Confirm all
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary small"
+                    onClick={rejectAllProposals}
+                  >
+                    Reject all
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {!hasNote && !streaming && (
@@ -442,80 +487,93 @@ export default function EncounterWorkspacePage() {
           )}
 
           <div className="soap-sections">
-            {SOAP_SECTIONS.map(({ key, label }) => (
-              <div key={key}>
-                <label className="soap-section edit">
-                  <span>{label}</span>
-                  <textarea
-                    value={note[key]}
-                    onChange={(e) => {
-                      setNote((prev) => ({ ...prev, [key]: e.target.value }))
-                      setSaveSource('manual')
-                    }}
-                    rows={5}
-                    disabled={streaming}
-                  />
-                </label>
+            {SOAP_SECTIONS.map(({ key, label }) => {
+              const pendingSection = pendingProposal[key]
+              return (
+                <div key={key}>
+                  {pendingSection ? (
+                    <SoapSectionDiff
+                      label={label}
+                      before={pendingSection.before}
+                      after={pendingSection.after}
+                      onConfirm={() => confirmProposalSection(key)}
+                      onReject={() => rejectProposalSection(key)}
+                    />
+                  ) : (
+                    <label className="soap-section edit">
+                      <span>{label}</span>
+                      <textarea
+                        value={note[key]}
+                        onChange={(e) => {
+                          setNote((prev) => ({ ...prev, [key]: e.target.value }))
+                          setSaveSource('manual')
+                        }}
+                        rows={5}
+                        disabled={streaming}
+                      />
+                    </label>
+                  )}
 
-                {key === 'assessment' && (
-                  <div className="icd-suggestions">
-                    <div className="icd-suggestions-heading">
-                      <h4>Suggested ICD-10 codes</h4>
-                      <button
-                        type="button"
-                        className="secondary small"
-                        disabled={!note.assessment.trim() || icdLoading}
-                        onClick={() => void runIcdSuggest()}
-                      >
-                        {icdLoading ? 'Suggesting…' : 'Suggest codes'}
-                      </button>
+                  {key === 'assessment' && (
+                    <div className="icd-suggestions">
+                      <div className="icd-suggestions-heading">
+                        <h4>Suggested ICD-10 codes</h4>
+                        <button
+                          type="button"
+                          className="secondary small"
+                          disabled={!note.assessment.trim() || icdLoading}
+                          onClick={() => void runIcdSuggest()}
+                        >
+                          {icdLoading ? 'Suggesting…' : 'Suggest codes'}
+                        </button>
+                      </div>
+                      {icdError && (
+                        <p className="error" role="alert">
+                          {icdError}
+                        </p>
+                      )}
+                      {icdSuggestions.length === 0 && !icdLoading && (
+                        <p className="empty">
+                          No suggestions yet — generate or write an assessment, then click
+                          Suggest codes.
+                        </p>
+                      )}
+                      <ul className="icd-list">
+                        {icdSuggestions.map((s) => (
+                          <li key={s.id} className={`icd-item icd-${s.status}`}>
+                            <span className="icd-code">{s.code}</span>
+                            <span className="icd-desc">{s.description}</span>
+                            <span className="icd-sim">{Math.round(s.similarity * 100)}%</span>
+                            {s.status === 'suggested' ? (
+                              <span className="icd-actions">
+                                <button
+                                  type="button"
+                                  className="secondary small"
+                                  onClick={() => handleIcdStatus(s.id, 'accepted')}
+                                >
+                                  Accept
+                                </button>
+                                <button
+                                  type="button"
+                                  className="secondary small"
+                                  onClick={() => handleIcdStatus(s.id, 'rejected')}
+                                >
+                                  Reject
+                                </button>
+                              </span>
+                            ) : (
+                              <span className={`icd-status-badge icd-${s.status}`}>
+                                {s.status === 'accepted' ? '✓ accepted' : '✕ rejected'}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                    {icdError && (
-                      <p className="error" role="alert">
-                        {icdError}
-                      </p>
-                    )}
-                    {icdSuggestions.length === 0 && !icdLoading && (
-                      <p className="empty">
-                        No suggestions yet — generate or write an assessment, then click
-                        Suggest codes.
-                      </p>
-                    )}
-                    <ul className="icd-list">
-                      {icdSuggestions.map((s) => (
-                        <li key={s.id} className={`icd-item icd-${s.status}`}>
-                          <span className="icd-code">{s.code}</span>
-                          <span className="icd-desc">{s.description}</span>
-                          <span className="icd-sim">{Math.round(s.similarity * 100)}%</span>
-                          {s.status === 'suggested' ? (
-                            <span className="icd-actions">
-                              <button
-                                type="button"
-                                className="secondary small"
-                                onClick={() => handleIcdStatus(s.id, 'accepted')}
-                              >
-                                Accept
-                              </button>
-                              <button
-                                type="button"
-                                className="secondary small"
-                                onClick={() => handleIcdStatus(s.id, 'rejected')}
-                              >
-                                Reject
-                              </button>
-                            </span>
-                          ) : (
-                            <span className={`icd-status-badge icd-${s.status}`}>
-                              {s.status === 'accepted' ? '✓ accepted' : '✕ rejected'}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            ))}
+                  )}
+                </div>
+              )
+            })}
           </div>
 
           <div className="panel icd-search-widget">

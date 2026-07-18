@@ -79,8 +79,13 @@ Admin UI is not built yet; the admin role is stored for a later dashboard.
 1. Sign in as a provider.
 2. Start a new encounter with patient first name, last name, and DOB.
 3. Paste a transcript or type observations, then **Generate SOAP note** (streams into editable S/O/A/P fields).
-4. Optionally **Start voice session** for full-duplex Realtime editing (browser mic + speaker).
-5. **Save note** to persist the current draft and append a version history entry.
+4. Optionally **Start voice session** for full-duplex Realtime editing (browser mic + speaker). Voice/AI edits
+   are never applied silently: each proposed change is shown per-section as a word-level diff (green
+   additions, struck-through red deletions) with **Confirm**/**Reject** actions. You can keep talking while a
+   proposal is pending — further clarifications re-diff the same proposal against the last confirmed text —
+   and confirm/reject either by clicking the buttons or by saying so out loud (e.g. "confirm that" / "undo
+   that").
+5. **Save note** to persist the current (confirmed) draft and append a version history entry.
 
 ## API overview
 

@@ -7,6 +7,8 @@ export type SoapNote = {
   plan: string
 }
 
+export type SoapKey = keyof SoapNote
+
 export type User = {
   id: number
   email: string

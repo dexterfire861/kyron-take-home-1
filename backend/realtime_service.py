@@ -11,9 +11,14 @@ APPLY_SOAP_EDITS_TOOL = {
     "type": "function",
     "name": "apply_soap_edits",
     "description": (
-        "Apply edits to the current SOAP note. Include only sections that change. "
+        "Propose edits to the current SOAP note. Include only sections that change. "
         "For each included section, provide the full updated section text. "
-        "Preserve all prior content unless the clinician asked to change or remove it."
+        "Preserve all prior content unless the clinician asked to change or remove it. "
+        "This does NOT save the note — it stages a proposal that the clinician sees as a "
+        "highlighted diff and must explicitly confirm (via confirm_pending_edits or the on-screen "
+        "Confirm button) before it becomes part of the official note. Calling this again before "
+        "confirmation replaces the previous proposal for that section with a fresh one, still "
+        "diffed against the last confirmed text."
     ),
     "parameters": {
         "type": "object",
@@ -36,9 +41,41 @@ APPLY_SOAP_EDITS_TOOL = {
             },
             "assistant_summary": {
                 "type": "string",
-                "description": "Brief conversational acknowledgment of the edit",
+                "description": "Brief conversational acknowledgment describing the proposed edit",
             },
         },
+        "additionalProperties": False,
+    },
+}
+
+CONFIRM_PENDING_EDITS_TOOL = {
+    "type": "function",
+    "name": "confirm_pending_edits",
+    "description": (
+        "Confirm and apply the currently pending SOAP edits proposed via apply_soap_edits, "
+        "merging them into the official note. Call this ONLY when the provider explicitly "
+        "accepts the pending changes (e.g. says 'confirm', 'yes, apply that', 'looks good', "
+        "'accept it'). If nothing is pending, calling this has no effect."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
+}
+
+REJECT_PENDING_EDITS_TOOL = {
+    "type": "function",
+    "name": "reject_pending_edits",
+    "description": (
+        "Discard the currently pending SOAP edits proposed via apply_soap_edits, leaving the "
+        "official note unchanged. Call this ONLY when the provider explicitly rejects or cancels "
+        "the pending changes (e.g. says 'reject that', 'no, discard it', 'undo', 'never mind'). "
+        "If nothing is pending, calling this has no effect."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
         "additionalProperties": False,
     },
 }
@@ -49,7 +86,7 @@ def build_voice_instructions(note: dict[str, str], patient_label: str) -> str:
 
 Patient: {patient_label}
 
-Current SOAP note:
+Current SOAP note (last confirmed version):
 SUBJECTIVE:
 {note.get('subjective') or '(empty)'}
 
@@ -78,7 +115,23 @@ Behavior:
 - Only ask a clarifying question when it is genuinely unclear what should change (e.g. which of two active
   problems "it" refers to) — never merely because the provider phrased something as a statement rather
   than a command.
-- After calling apply_soap_edits, briefly confirm out loud what you changed.
+
+IMPORTANT — proposals, not immediate edits:
+- apply_soap_edits does NOT save anything. It stages a proposed edit that the provider sees on screen as a
+  highlighted diff (green additions, struck-through red deletions) against the current note. Nothing is
+  saved until the provider explicitly confirms.
+- If the provider gives further clarifications or corrections before confirming, call apply_soap_edits again
+  with the full updated text reflecting ALL desired changes so far (not just the latest delta) — this
+  replaces the previous proposal for that section with a fresh diff, still measured against the last
+  confirmed text, not the previous proposal.
+- Call confirm_pending_edits when the provider explicitly confirms/accepts the pending proposal (they may
+  also use the on-screen Confirm button instead — that's fine, you don't need to do anything in that case).
+- Call reject_pending_edits when the provider explicitly rejects/cancels the pending proposal.
+- Never assume a proposal was confirmed just because the provider didn't object — wait for an explicit
+  confirmation. In the meantime, keep listening and keep documenting further stated facts as staged
+  proposals.
+- After calling apply_soap_edits, briefly describe the proposed change out loud (e.g. "I've drafted that —
+  let me know if it looks right") rather than stating it as already done.
 - The provider may interrupt you; stop and listen when they speak.
 """
 
@@ -97,7 +150,11 @@ def create_realtime_client_secret(
             "type": "realtime",
             "model": REALTIME_MODEL,
             "instructions": build_voice_instructions(note, patient_label),
-            "tools": [APPLY_SOAP_EDITS_TOOL],
+            "tools": [
+                APPLY_SOAP_EDITS_TOOL,
+                CONFIRM_PENDING_EDITS_TOOL,
+                REJECT_PENDING_EDITS_TOOL,
+            ],
             "tool_choice": "auto",
             "audio": {
                 "input": {

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRealtimeSession } from '../api'
 import type { SoapNote } from '../types'
 
@@ -6,6 +6,15 @@ type VoiceStatus = 'idle' | 'connecting' | 'live' | 'error'
 
 const LOG_PREFIX = '%c[voice]'
 const LOG_STYLE = 'color:#0f766e;font-weight:600'
+
+export type RealtimeVoiceHandlers = {
+  /** A proposed edit arrived (from apply_soap_edits) — stage it as a pending diff, do not commit it. */
+  onProposeEdit: (partial: Partial<SoapNote>, summary?: string) => void
+  /** The provider verbally confirmed the pending proposal — merge it into the note. */
+  onConfirmProposal: () => void
+  /** The provider verbally rejected the pending proposal — discard it. */
+  onRejectProposal: () => void
+}
 
 function extractFunctionArgs(event: Record<string, unknown>): string | null {
   // Support a few Realtime event shapes for tool/function calls
@@ -17,10 +26,7 @@ function extractFunctionArgs(event: Record<string, unknown>): string | null {
   return null
 }
 
-export function useRealtimeVoice(
-  token: string | null,
-  onNoteEdit: (partial: Partial<SoapNote>, summary?: string) => void,
-) {
+export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHandlers) {
   const [status, setStatus] = useState<VoiceStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [lastSummary, setLastSummary] = useState<string | null>(null)
@@ -30,8 +36,20 @@ export function useRealtimeVoice(
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const argBufferRef = useRef<Record<string, string>>({})
+  const callNameRef = useRef<Record<string, string>>({})
   const appliedCallIdsRef = useRef<Set<string>>(new Set())
   const transcriptBufferRef = useRef<Record<string, string>>({})
+
+  // The data channel is a long-lived imperative object whose `onmessage`
+  // handler is only assigned once per `start()` call. Routing handler
+  // lookups through a ref (updated every render) means callers don't need
+  // to worry about `handleServerEvent`'s identity going stale mid-session —
+  // e.g. when the pending-proposal state (and therefore onConfirmProposal /
+  // onRejectProposal) changes after the voice session already started.
+  const handlersRef = useRef(handlers)
+  useEffect(() => {
+    handlersRef.current = handlers
+  }, [handlers])
 
   const stop = useCallback(() => {
     dcRef.current?.close()
@@ -46,161 +64,200 @@ export function useRealtimeVoice(
     setStatus('idle')
   }, [])
 
-  const handleServerEvent = useCallback(
-    (raw: string) => {
-      let event: Record<string, unknown>
-      try {
-        event = JSON.parse(raw)
-      } catch {
-        console.warn(LOG_PREFIX, LOG_STYLE, 'received non-JSON message', raw)
-        return
-      }
+  const handleServerEvent = useCallback((raw: string) => {
+    let event: Record<string, unknown>
+    try {
+      event = JSON.parse(raw)
+    } catch {
+      console.warn(LOG_PREFIX, LOG_STYLE, 'received non-JSON message', raw)
+      return
+    }
 
-      const type = String(event.type ?? '')
+    const type = String(event.type ?? '')
 
-      // Full firehose so you can see exactly what's coming over the wire.
-      // Delta events are extremely chatty, so those get a single collapsed
-      // debug line; everything else is logged in full.
-      if (type.endsWith('.delta')) {
-        console.debug(LOG_PREFIX, LOG_STYLE, type)
-      } else {
-        console.log(LOG_PREFIX, LOG_STYLE, type, event)
-      }
+    // Full firehose so you can see exactly what's coming over the wire.
+    // Delta events are extremely chatty, so those get a single collapsed
+    // debug line; everything else is logged in full.
+    if (type.endsWith('.delta')) {
+      console.debug(LOG_PREFIX, LOG_STYLE, type)
+    } else {
+      console.log(LOG_PREFIX, LOG_STYLE, type, event)
+    }
 
-      // --- Errors: the Realtime API reports problems (bad session config,
-      // rate limits, malformed tool calls) via a dedicated "error" event.
-      // Previously this was silently ignored, which can look identical to
-      // "the model just didn't do anything."
-      if (type === 'error') {
-        const err = event.error as Record<string, unknown> | undefined
+    // --- Errors: the Realtime API reports problems (bad session config,
+    // rate limits, malformed tool calls) via a dedicated "error" event.
+    // Previously this was silently ignored, which can look identical to
+    // "the model just didn't do anything."
+    if (type === 'error') {
+      const err = event.error as Record<string, unknown> | undefined
+      const message =
+        (err?.message as string | undefined) ?? 'Realtime API reported an error'
+      console.error(LOG_PREFIX, LOG_STYLE, 'server error:', err ?? event)
+      setError(message)
+      return
+    }
+
+    if (type === 'response.done') {
+      const response = event.response as Record<string, unknown> | undefined
+      if (response?.status === 'failed') {
+        const statusDetails = response.status_details as
+          | Record<string, unknown>
+          | undefined
+        const err = statusDetails?.error as Record<string, unknown> | undefined
         const message =
-          (err?.message as string | undefined) ?? 'Realtime API reported an error'
-        console.error(LOG_PREFIX, LOG_STYLE, 'server error:', err ?? event)
+          (err?.message as string | undefined) ?? 'Response generation failed'
+        console.error(LOG_PREFIX, LOG_STYLE, 'response failed:', statusDetails ?? response)
         setError(message)
+      }
+      return
+    }
+
+    // --- What the model heard you say (input speech-to-text) ---
+    if (type === 'conversation.item.input_audio_transcription.delta') {
+      const itemId = String(event.item_id ?? 'default')
+      const delta = typeof event.delta === 'string' ? event.delta : ''
+      transcriptBufferRef.current[itemId] =
+        (transcriptBufferRef.current[itemId] ?? '') + delta
+      setHeardText(transcriptBufferRef.current[itemId])
+      return
+    }
+
+    if (type === 'conversation.item.input_audio_transcription.completed') {
+      const itemId = String(event.item_id ?? 'default')
+      const finalText =
+        (event.transcript as string | undefined) ??
+        transcriptBufferRef.current[itemId] ??
+        ''
+      console.log(LOG_PREFIX, LOG_STYLE, 'heard:', finalText)
+      setHeardText(finalText)
+      delete transcriptBufferRef.current[itemId]
+      return
+    }
+
+    if (type === 'conversation.item.input_audio_transcription.failed') {
+      console.error(LOG_PREFIX, LOG_STYLE, 'transcription failed:', event.error)
+      return
+    }
+
+    // --- Tool call bookkeeping: the Realtime API announces a function call
+    // via `response.output_item.added` before its arguments stream in, so
+    // capture the tool name here (the later "done" events don't reliably
+    // include it) and key everything off call_id.
+    if (type === 'response.output_item.added') {
+      const item = event.item as Record<string, unknown> | undefined
+      if (item?.type === 'function_call') {
+        const callId = String(item.call_id ?? '')
+        const name = typeof item.name === 'string' ? item.name : ''
+        if (callId && name) callNameRef.current[callId] = name
+      }
+      return
+    }
+
+    if (type === 'response.function_call_arguments.delta') {
+      const callId = String(event.call_id ?? 'default')
+      const delta = typeof event.delta === 'string' ? event.delta : ''
+      argBufferRef.current[callId] = (argBufferRef.current[callId] ?? '') + delta
+      return
+    }
+
+    if (
+      type === 'response.function_call_arguments.done' ||
+      type === 'response.output_item.done' ||
+      type === 'conversation.item.done'
+    ) {
+      const callId = String(event.call_id ?? 'default')
+      const item = event.item as Record<string, unknown> | undefined
+
+      if (item?.type === 'function_call' && typeof item.name === 'string' && item.name) {
+        callNameRef.current[callId] = item.name
+      }
+
+      let argsText = argBufferRef.current[callId] ?? extractFunctionArgs(event) ?? ''
+      if (!argsText && item?.type === 'function_call' && typeof item.arguments === 'string') {
+        argsText = item.arguments
+      }
+      if (!argsText) return
+
+      // The Realtime API fires multiple "done"-style events for the same
+      // function call (function_call_arguments.done, output_item.done,
+      // conversation.item.done); only act on the first one per call_id.
+      if (appliedCallIdsRef.current.has(callId)) {
+        delete argBufferRef.current[callId]
         return
       }
 
-      if (type === 'response.done') {
-        const response = event.response as Record<string, unknown> | undefined
-        if (response?.status === 'failed') {
-          const statusDetails = response.status_details as
-            | Record<string, unknown>
-            | undefined
-          const err = statusDetails?.error as Record<string, unknown> | undefined
-          const message =
-            (err?.message as string | undefined) ?? 'Response generation failed'
-          console.error(LOG_PREFIX, LOG_STYLE, 'response failed:', statusDetails ?? response)
-          setError(message)
+      const toolName = callNameRef.current[callId] ?? 'apply_soap_edits'
+      console.log(LOG_PREFIX, LOG_STYLE, 'tool call:', toolName, argsText)
+
+      const ackAndRespond = (ackStatus: string) => {
+        // Tell the model the tool call was handled so it can respond out
+        // loud and continue the conversation. Without this ack the
+        // Realtime API leaves the tool call dangling and the assistant
+        // goes silent instead of responding.
+        dcRef.current?.send(
+          JSON.stringify({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: callId,
+              output: JSON.stringify({ status: ackStatus }),
+            },
+          }),
+        )
+        dcRef.current?.send(JSON.stringify({ type: 'response.create' }))
+      }
+
+      if (toolName === 'confirm_pending_edits') {
+        appliedCallIdsRef.current.add(callId)
+        delete argBufferRef.current[callId]
+        delete callNameRef.current[callId]
+        console.log(LOG_PREFIX, LOG_STYLE, 'confirming pending proposal (voice)')
+        handlersRef.current.onConfirmProposal()
+        ackAndRespond('confirmed')
+        return
+      }
+
+      if (toolName === 'reject_pending_edits') {
+        appliedCallIdsRef.current.add(callId)
+        delete argBufferRef.current[callId]
+        delete callNameRef.current[callId]
+        console.log(LOG_PREFIX, LOG_STYLE, 'rejecting pending proposal (voice)')
+        handlersRef.current.onRejectProposal()
+        ackAndRespond('rejected')
+        return
+      }
+
+      try {
+        const args = JSON.parse(argsText) as Partial<SoapNote> & {
+          assistant_summary?: string
         }
-        return
-      }
-
-      // --- What the model heard you say (input speech-to-text) ---
-      if (type === 'conversation.item.input_audio_transcription.delta') {
-        const itemId = String(event.item_id ?? 'default')
-        const delta = typeof event.delta === 'string' ? event.delta : ''
-        transcriptBufferRef.current[itemId] =
-          (transcriptBufferRef.current[itemId] ?? '') + delta
-        setHeardText(transcriptBufferRef.current[itemId])
-        return
-      }
-
-      if (type === 'conversation.item.input_audio_transcription.completed') {
-        const itemId = String(event.item_id ?? 'default')
-        const finalText =
-          (event.transcript as string | undefined) ??
-          transcriptBufferRef.current[itemId] ??
-          ''
-        console.log(LOG_PREFIX, LOG_STYLE, 'heard:', finalText)
-        setHeardText(finalText)
-        delete transcriptBufferRef.current[itemId]
-        return
-      }
-
-      if (type === 'conversation.item.input_audio_transcription.failed') {
-        console.error(LOG_PREFIX, LOG_STYLE, 'transcription failed:', event.error)
-        return
-      }
-
-      if (type === 'response.function_call_arguments.delta') {
-        const callId = String(event.call_id ?? 'default')
-        const delta = typeof event.delta === 'string' ? event.delta : ''
-        argBufferRef.current[callId] = (argBufferRef.current[callId] ?? '') + delta
-        return
-      }
-
-      if (
-        type === 'response.function_call_arguments.done' ||
-        type === 'response.output_item.done' ||
-        type === 'conversation.item.done'
-      ) {
-        const callId = String(event.call_id ?? 'default')
-        let argsText =
-          argBufferRef.current[callId] ?? extractFunctionArgs(event) ?? ''
-
-        const item = event.item as Record<string, unknown> | undefined
-        if (!argsText && item?.type === 'function_call' && typeof item.arguments === 'string') {
-          argsText = item.arguments
+        const partial: Partial<SoapNote> = {}
+        for (const key of ['subjective', 'objective', 'assessment', 'plan'] as const) {
+          if (typeof args[key] === 'string') partial[key] = args[key]
         }
-        if (!argsText) return
-
-        // The Realtime API fires multiple "done"-style events for the same
-        // function call (function_call_arguments.done, output_item.done,
-        // conversation.item.done); only act on the first one per call_id.
-        if (appliedCallIdsRef.current.has(callId)) {
-          delete argBufferRef.current[callId]
-          return
+        if (Object.keys(partial).length > 0) {
+          appliedCallIdsRef.current.add(callId)
+          delete callNameRef.current[callId]
+          console.log(LOG_PREFIX, LOG_STYLE, 'proposing note edit:', partial)
+          handlersRef.current.onProposeEdit(partial, args.assistant_summary)
+          if (args.assistant_summary) setLastSummary(args.assistant_summary)
+          ackAndRespond('proposed')
+          console.log(LOG_PREFIX, LOG_STYLE, 'sent function_call_output + response.create')
+        } else {
+          console.warn(
+            LOG_PREFIX,
+            LOG_STYLE,
+            'tool call arguments parsed but had no SOAP fields:',
+            args,
+          )
         }
-
-        console.log(LOG_PREFIX, LOG_STYLE, 'tool call arguments:', argsText)
-
-        try {
-          const args = JSON.parse(argsText) as Partial<SoapNote> & {
-            assistant_summary?: string
-          }
-          const partial: Partial<SoapNote> = {}
-          for (const key of ['subjective', 'objective', 'assessment', 'plan'] as const) {
-            if (typeof args[key] === 'string') partial[key] = args[key]
-          }
-          if (Object.keys(partial).length > 0) {
-            appliedCallIdsRef.current.add(callId)
-            console.log(LOG_PREFIX, LOG_STYLE, 'applying note edit:', partial)
-            onNoteEdit(partial, args.assistant_summary)
-            if (args.assistant_summary) setLastSummary(args.assistant_summary)
-
-            // Tell the model the edit succeeded so it can confirm out loud
-            // and continue the conversation. Without this ack the Realtime
-            // API leaves the tool call dangling and the assistant goes
-            // silent instead of responding.
-            dcRef.current?.send(
-              JSON.stringify({
-                type: 'conversation.item.create',
-                item: {
-                  type: 'function_call_output',
-                  call_id: callId,
-                  output: JSON.stringify({ status: 'applied' }),
-                },
-              }),
-            )
-            dcRef.current?.send(JSON.stringify({ type: 'response.create' }))
-            console.log(LOG_PREFIX, LOG_STYLE, 'sent function_call_output + response.create')
-          } else {
-            console.warn(
-              LOG_PREFIX,
-              LOG_STYLE,
-              'tool call arguments parsed but had no SOAP fields:',
-              args,
-            )
-          }
-        } catch (err) {
-          console.error(LOG_PREFIX, LOG_STYLE, 'failed to parse tool call arguments:', argsText, err)
-        } finally {
-          delete argBufferRef.current[callId]
-        }
+      } catch (err) {
+        console.error(LOG_PREFIX, LOG_STYLE, 'failed to parse tool call arguments:', argsText, err)
+      } finally {
+        delete argBufferRef.current[callId]
       }
-    },
-    [onNoteEdit],
-  )
+    }
+  }, [])
 
   const start = useCallback(
     async (encounterId: number) => {
@@ -211,6 +268,7 @@ export function useRealtimeVoice(
       setHeardText('')
       setStatus('connecting')
       argBufferRef.current = {}
+      callNameRef.current = {}
       appliedCallIdsRef.current = new Set()
       transcriptBufferRef.current = {}
 
