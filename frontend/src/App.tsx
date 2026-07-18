@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './auth'
 import EncounterWorkspacePage from './pages/EncounterWorkspacePage'
 import LoginPage from './pages/LoginPage'
 import NewEncounterPage from './pages/NewEncounterPage'
+import PatientDetailPage from './pages/PatientDetailPage'
+import PatientsPage from './pages/PatientsPage'
 import './App.css'
 
 function Protected({ children }: { children: ReactNode }) {
@@ -23,6 +25,22 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/patients"
+        element={
+          <Protected>
+            <PatientsPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/patients/:patientId"
+        element={
+          <Protected>
+            <PatientDetailPage />
+          </Protected>
+        }
+      />
       <Route
         path="/encounters/new"
         element={

@@ -52,6 +52,29 @@ export type Encounter = {
   versions?: NoteVersion[]
 }
 
+export type PatientSummary = Patient & {
+  encounter_count: number
+  last_encounter_at: string | null
+  last_status: string | null
+}
+
+export type PatientHistoryEncounter = {
+  id: number
+  provider_id: number
+  patient_id: number
+  input_text: string
+  input_type: InputType
+  status: string
+  created_at: string | null
+  updated_at: string | null
+  has_note: boolean
+}
+
+export type PatientDetail = {
+  patient: Patient
+  encounters: PatientHistoryEncounter[]
+}
+
 export type IcdSuggestion = {
   id: number
   note_id: number

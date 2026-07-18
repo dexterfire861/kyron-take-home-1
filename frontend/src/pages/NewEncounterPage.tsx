@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { createEncounter } from '../api'
 import { useAuth } from '../auth'
 
@@ -40,9 +40,14 @@ export default function NewEncounterPage() {
             Signed in as {user?.full_name}. Enter patient identity to begin.
           </p>
         </div>
-        <button type="button" className="secondary" onClick={logout}>
-          Sign out
-        </button>
+        <div className="header-actions">
+          <Link className="secondary button-link" to="/patients">
+            All patients
+          </Link>
+          <button type="button" className="secondary" onClick={logout}>
+            Sign out
+          </button>
+        </div>
       </header>
 
       <form className="panel" onSubmit={handleSubmit}>

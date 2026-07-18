@@ -11,7 +11,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false)
 
   if (!loading && user) {
-    return <Navigate to="/encounters/new" replace />
+    return <Navigate to="/patients" replace />
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -20,7 +20,7 @@ export default function LoginPage() {
     setError(null)
     try {
       await login(email.trim(), password)
-      navigate('/encounters/new')
+      navigate('/patients')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {

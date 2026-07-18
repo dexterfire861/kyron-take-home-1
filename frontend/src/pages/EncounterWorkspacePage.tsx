@@ -260,7 +260,7 @@ export default function EncounterWorkspacePage() {
     return (
       <div className="app narrow">
         <p className="error">{loadError}</p>
-        <Link to="/encounters/new">Back</Link>
+        <Link to="/patients">Back to patients</Link>
       </div>
     )
   }
@@ -287,6 +287,9 @@ export default function EncounterWorkspacePage() {
           </p>
         </div>
         <div className="header-actions">
+          <Link className="secondary button-link" to="/patients">
+            All patients
+          </Link>
           <Link className="secondary button-link" to="/encounters/new">
             New encounter
           </Link>

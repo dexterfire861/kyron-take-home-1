@@ -5,6 +5,8 @@ import type {
   InputType,
   Note,
   NoteVersion,
+  PatientDetail,
+  PatientSummary,
   SoapNote,
   User,
 } from './types'
@@ -44,6 +46,27 @@ export async function fetchMe(token: string): Promise<User> {
   if (!response.ok) throw new Error(await parseError(response))
   const data = await response.json()
   return data.user as User
+}
+
+export async function listPatients(
+  token: string,
+): Promise<{ patients: PatientSummary[] }> {
+  const response = await fetch(`${API_BASE}/api/patients`, {
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  return response.json()
+}
+
+export async function getPatientDetail(
+  token: string,
+  patientId: number,
+): Promise<PatientDetail> {
+  const response = await fetch(`${API_BASE}/api/patients/${patientId}`, {
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  return response.json()
 }
 
 export async function createEncounter(
