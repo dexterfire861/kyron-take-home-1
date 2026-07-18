@@ -9,3 +9,6 @@ PyJWT>=2.8.0
 requests>=2.31.0
 gunicorn>=22.0.0
 boto3>=1.34.0
+
+# Testing (backend/tests/)
+pytest>=8.0.0
