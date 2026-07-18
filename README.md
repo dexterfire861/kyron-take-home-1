@@ -125,3 +125,33 @@ Events: `section_start`, `section_delta`, `section_end`, `done`, `error`.
 - Never commit `backend/.env`.
 - Voice editing uses an ephemeral Realtime client secret; the server API key never ships to the browser.
 - Mic permission is required for voice sessions.
+
+## Testing
+
+### Backend (pytest)
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export TEST_DATABASE_URL="postgresql+psycopg://kyron:kyron@localhost:5432/kyron_test"  # a Postgres test DB, separate from dev
+pytest
+```
+
+Covers auth/tenancy, patient identity + DOB validation, encounter
+generate/save/versioning, ICD-10 suggest/search, Realtime session guards,
+and the SOAP marker parser/streaming assembler — all without calling
+OpenAI (every LLM/Realtime boundary is mocked). See
+[`backend/tests/README.md`](backend/tests/README.md) for full details and
+one-time test-database setup.
+
+### Frontend (Vitest)
+
+```bash
+cd frontend
+npm install
+npm test
+```
+
+Currently covers the pure SSE chunk parser used by the streaming
+`/generate` client (`src/lib/sse.ts`).
