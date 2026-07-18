@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   getEncounter,
@@ -8,8 +8,8 @@ import {
   suggestIcdCodes,
   updateIcdSuggestion,
 } from '../api'
-import { useAuth } from '../auth'
 import { SoapSectionDiff } from '../components/SoapSectionDiff'
+import { useAuth } from '../auth'
 import { useDictation } from '../hooks/useDictation'
 import { useRealtimeVoice } from '../hooks/useRealtimeVoice'
 import { useSoapProposal } from '../hooks/useSoapProposal'
@@ -24,6 +24,50 @@ import {
   type NoteVersion,
   type SoapNote,
 } from '../types'
+
+type StageId = 'capture' | 'generate' | 'review' | 'save'
+
+const STAGES: { id: StageId; label: string }[] = [
+  { id: 'capture', label: 'Capture' },
+  { id: 'generate', label: 'Generate' },
+  { id: 'review', label: 'Review & refine' },
+  { id: 'save', label: 'Save' },
+]
+
+const ENCOUNTER_STATUS_LABELS: Record<string, string> = {
+  draft: 'Not started',
+  active: 'In progress',
+  saved: 'Saved',
+}
+
+type StatusTone = 'idle' | 'info' | 'live' | 'warning' | 'success' | 'error'
+
+type WorkspaceStatus = {
+  tone: StatusTone
+  label: string
+  detail?: string
+}
+
+function calculateAge(dob: string): number | null {
+  const parsed = new Date(dob)
+  if (Number.isNaN(parsed.getTime())) return null
+  const now = new Date()
+  let age = now.getFullYear() - parsed.getFullYear()
+  const monthDiff = now.getMonth() - parsed.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < parsed.getDate())) {
+    age -= 1
+  }
+  return age
+}
+
+function soapEquals(a: SoapNote, b: SoapNote): boolean {
+  return (
+    a.subjective === b.subjective &&
+    a.objective === b.objective &&
+    a.assessment === b.assessment &&
+    a.plan === b.plan
+  )
+}
 
 export default function EncounterWorkspacePage() {
   const { encounterId } = useParams()
@@ -44,6 +88,16 @@ export default function EncounterWorkspacePage() {
   const [saving, setSaving] = useState(false)
   const [saveSource, setSaveSource] = useState<'manual' | 'voice_session'>('manual')
   const [dirtyFromVoice, setDirtyFromVoice] = useState(false)
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
+
+  // Tracks the last note contents persisted to the server so the UI can
+  // always tell the provider "you have unsaved changes" regardless of
+  // whether the edit came from typing, generation, or voice.
+  const savedSnapshotRef = useRef<SoapNote>(EMPTY_SOAP)
+  const [dirty, setDirty] = useState(false)
+  useEffect(() => {
+    setDirty(!soapEquals(note, savedSnapshotRef.current))
+  }, [note])
 
   const [icdSuggestions, setIcdSuggestions] = useState<IcdSuggestion[]>([])
   const [icdLoading, setIcdLoading] = useState(false)
@@ -146,16 +200,17 @@ export default function EncounterWorkspacePage() {
         setEncounter(enc)
         updateText(enc.input_text || '')
         setInputType(enc.input_type || 'transcript')
-        if (enc.note) {
-          setNote({
-            subjective: enc.note.subjective,
-            objective: enc.note.objective,
-            assessment: enc.note.assessment,
-            plan: enc.note.plan,
-          })
-        }
+        const loadedNote: SoapNote = enc.note
+          ? {
+              subjective: enc.note.subjective,
+              objective: enc.note.objective,
+              assessment: enc.note.assessment,
+              plan: enc.note.plan,
+            }
+          : EMPTY_SOAP
+        setNote(loadedNote)
+        savedSnapshotRef.current = loadedNote
         setVersions(enc.versions ?? [])
-        rejectAllProposals()
       })
       .catch((err) => {
         setLoadError(err instanceof Error ? err.message : 'Failed to load encounter')
@@ -255,6 +310,10 @@ export default function EncounterWorkspacePage() {
       setSaveError('Nothing to save yet.')
       return
     }
+    if (hasPendingProposal) {
+      setSaveError('Confirm or reject pending voice edits before saving.')
+      return
+    }
     setSaving(true)
     setSaveError(null)
     try {
@@ -267,6 +326,10 @@ export default function EncounterWorkspacePage() {
       setVersions((prev) => [result.version, ...prev])
       setDirtyFromVoice(false)
       setSaveSource('manual')
+      savedSnapshotRef.current = note
+      setDirty(false)
+      setLastSavedAt(new Date())
+      setEncounter((prev) => (prev ? { ...prev, status: 'saved' } : prev))
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
@@ -276,6 +339,81 @@ export default function EncounterWorkspacePage() {
 
   const hasNote = Object.values(note).some((v) => v.trim())
   const patient = encounter?.patient
+  const patientAge = patient ? calculateAge(patient.date_of_birth) : null
+
+  const status: WorkspaceStatus = useMemo(() => {
+    if (streamError) return { tone: 'error', label: 'Generation error', detail: streamError }
+    if (saveError) return { tone: 'error', label: 'Save error', detail: saveError }
+    if (voiceError) return { tone: 'error', label: 'Voice session error', detail: voiceError }
+    if (dictationError) return { tone: 'error', label: 'Dictation error', detail: dictationError }
+    if (hasPendingProposal) {
+      return {
+        tone: 'warning',
+        label: 'Pending AI edits',
+        detail: 'Review the green diff, then confirm or reject',
+      }
+    }
+    if (voiceStatus === 'connecting') return { tone: 'info', label: 'Connecting voice session…' }
+    if (voiceStatus === 'live') {
+      return {
+        tone: 'live',
+        label: 'Voice session live',
+        detail: 'Speak changes — they stage as a diff until you confirm',
+      }
+    }
+    if (dictationStatus === 'connecting') return { tone: 'info', label: 'Connecting dictation…' }
+    if (dictationStatus === 'listening') {
+      return { tone: 'live', label: 'Listening', detail: 'Dictating into clinical input' }
+    }
+    if (dictationStatus === 'paused') return { tone: 'warning', label: 'Dictation paused' }
+    if (streaming) return { tone: 'info', label: 'Generating SOAP note…' }
+    if (saving) return { tone: 'info', label: 'Saving note…' }
+    if (dirty) {
+      return {
+        tone: 'warning',
+        label: 'Unsaved changes',
+        detail: hasNote ? 'Review, then save when ready' : undefined,
+      }
+    }
+    if (hasNote) {
+      return {
+        tone: 'success',
+        label: 'All changes saved',
+        detail: lastSavedAt
+          ? `at ${lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+          : undefined,
+      }
+    }
+    return { tone: 'idle', label: 'Awaiting input', detail: 'Paste a transcript or start dictation' }
+  }, [
+    streamError,
+    saveError,
+    voiceError,
+    dictationError,
+    hasPendingProposal,
+    voiceStatus,
+    dictationStatus,
+    streaming,
+    saving,
+    dirty,
+    hasNote,
+    lastSavedAt,
+  ])
+
+  const currentStageId: StageId = streaming
+    ? 'generate'
+    : !hasNote
+      ? 'capture'
+      : hasPendingProposal || dirty
+        ? 'review'
+        : 'save'
+
+  const stageDone: Record<StageId, boolean> = {
+    capture: hasNote || text.trim().length > 0,
+    generate: hasNote,
+    review: versions.length > 0,
+    save: versions.length > 0 && !dirty,
+  }
 
   if (loadError) {
     return (
@@ -295,33 +433,67 @@ export default function EncounterWorkspacePage() {
   }
 
   return (
-    <div className="app">
-      <header className="header row">
-        <div>
-          <h1>Encounter workspace</h1>
-          <p>
-            {patient
-              ? `${patient.first_name} ${patient.last_name} · DOB ${patient.date_of_birth}`
-              : 'Patient'}
-            {' · '}
-            {user?.full_name}
-          </p>
+    <div className="app app-workspace">
+      <header className="workspace-header">
+        <div className="workspace-header-top">
+          <div className="patient-context">
+            <Link to="/patients" className="context-back" aria-label="Back to all patients">
+              ‹
+            </Link>
+            <div>
+              <div className="patient-context-name">
+                <span>{patient ? `${patient.first_name} ${patient.last_name}` : 'Patient'}</span>
+                <span className={`encounter-status-chip status-${encounter.status}`}>
+                  {ENCOUNTER_STATUS_LABELS[encounter.status] ?? encounter.status}
+                </span>
+              </div>
+              <div className="patient-context-meta">
+                {patient
+                  ? `DOB ${patient.date_of_birth}${
+                      patientAge !== null ? ` · age ${patientAge}` : ''
+                    }`
+                  : 'Patient'}
+                {' · '}
+                {user?.full_name}
+              </div>
+            </div>
+          </div>
+          <div className="header-actions">
+            <Link className="secondary button-link small" to="/encounters/new">
+              New encounter
+            </Link>
+            <button type="button" className="secondary small" onClick={logout}>
+              Sign out
+            </button>
+          </div>
         </div>
-        <div className="header-actions">
-          <Link className="secondary button-link" to="/patients">
-            All patients
-          </Link>
-          <Link className="secondary button-link" to="/encounters/new">
-            New encounter
-          </Link>
-          <button type="button" className="secondary" onClick={logout}>
-            Sign out
-          </button>
+
+        <div className={`status-strip status-tone-${status.tone}`}>
+          <span className="status-dot" aria-hidden="true" />
+          <span className="status-label">{status.label}</span>
+          {status.detail && <span className="status-detail">{status.detail}</span>}
         </div>
       </header>
 
+      <ol className="stage-tracker">
+        {STAGES.map((stage, index) => {
+          const isCurrent = stage.id === currentStageId
+          const isDone = stageDone[stage.id] && !isCurrent
+          return (
+            <li
+              key={stage.id}
+              className={`stage${isCurrent ? ' current' : ''}${isDone ? ' done' : ''}`}
+            >
+              <span className="stage-marker">{isDone ? '✓' : index + 1}</span>
+              <span className="stage-label">{stage.label}</span>
+            </li>
+          )
+        })}
+      </ol>
+
       <main className="layout">
         <form className="panel input-panel" onSubmit={handleGenerate}>
+          <p className="panel-eyebrow">Capture</p>
           <fieldset className="input-type">
             <legend>Input type</legend>
             <label>
@@ -376,9 +548,6 @@ export default function EncounterWorkspacePage() {
                 <button type="button" className="danger" onClick={stopDictation}>
                   Stop dictation
                 </button>
-                <span className="dictation-live-badge">
-                  {dictationStatus === 'listening' ? '● listening' : '⏸ paused'}
-                </span>
               </>
             )}
           </div>
@@ -406,7 +575,7 @@ export default function EncounterWorkspacePage() {
           {partialText && <p className="dictation-partial">…{partialText}</p>}
 
           <button type="submit" disabled={streaming || !text.trim()}>
-            {streaming ? 'Streaming SOAP…' : 'Generate SOAP note'}
+            {streaming ? 'Streaming SOAP…' : hasNote ? 'Regenerate SOAP note' : 'Generate SOAP note'}
           </button>
           {(streamError || saveError) && (
             <p className="error" role="alert">
@@ -416,48 +585,47 @@ export default function EncounterWorkspacePage() {
         </form>
 
         <section className="panel output-panel">
+          <p className="panel-eyebrow">Review &amp; refine</p>
           <div className="panel-heading">
             <h2>SOAP note</h2>
-            <div className="header-actions">
-              {voiceStatus === 'live' ? (
-                <button type="button" className="danger" onClick={stopVoice}>
-                  Stop voice
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={!hasNote || streaming || voiceStatus === 'connecting'}
-                  onClick={() => startVoice(encounter.id)}
-                >
-                  {voiceStatus === 'connecting'
-                    ? 'Connecting…'
-                    : 'Start voice session'}
-                </button>
-              )}
-              <button
-                type="button"
-                disabled={!hasNote || streaming || saving}
-                onClick={handleSave}
-              >
-                {saving ? 'Saving…' : 'Save note'}
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={!hasNote || streaming || saving || !dirty}
+              onClick={handleSave}
+              title={!dirty && hasNote ? 'No unsaved changes' : undefined}
+            >
+              {saving ? 'Saving…' : hasNote && !dirty ? 'Saved' : 'Save note'}
+            </button>
           </div>
 
-          {voiceStatus === 'live' && (
-            <p className="voice-live">Voice session live — speak naturally to edit the note.</p>
-          )}
+          <div className="voice-refine-row">
+            <div className="voice-refine-copy">
+              <span className="voice-refine-title">Voice refine</span>
+              <span className="voice-refine-hint">
+                Optional — speak changes; additions show in green until you confirm.
+              </span>
+            </div>
+            {voiceStatus === 'live' ? (
+              <button type="button" className="danger" onClick={stopVoice}>
+                Stop voice
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="secondary"
+                disabled={!hasNote || streaming || voiceStatus === 'connecting'}
+                onClick={() => startVoice(encounter.id)}
+              >
+                {voiceStatus === 'connecting' ? 'Connecting…' : 'Start voice session'}
+              </button>
+            )}
+          </div>
+
           {voiceStatus === 'live' && heardText && (
             <p className="voice-heard">Heard: “{heardText}”</p>
           )}
           {proposalSummary && <p className="voice-summary">{proposalSummary}</p>}
           {!proposalSummary && lastSummary && <p className="voice-summary">{lastSummary}</p>}
-          {voiceError && (
-            <p className="error" role="alert">
-              {voiceError}
-            </p>
-          )}
 
           {hasPendingProposal && (
             <div className="pending-banner">
@@ -482,6 +650,12 @@ export default function EncounterWorkspacePage() {
             </div>
           )}
 
+          {voiceError && (
+            <p className="error" role="alert">
+              {voiceError}
+            </p>
+          )}
+
           {!hasNote && !streaming && (
             <p className="empty">Generated sections will stream in here.</p>
           )}
@@ -490,143 +664,155 @@ export default function EncounterWorkspacePage() {
             {SOAP_SECTIONS.map(({ key, label }) => {
               const pendingSection = pendingProposal[key]
               return (
-                <div key={key}>
-                  {pendingSection ? (
-                    <SoapSectionDiff
-                      label={label}
-                      before={pendingSection.before}
-                      after={pendingSection.after}
-                      onConfirm={() => confirmProposalSection(key)}
-                      onReject={() => rejectProposalSection(key)}
-                    />
-                  ) : (
-                    <label className="soap-section edit">
-                      <span>{label}</span>
-                      <textarea
-                        value={note[key]}
-                        onChange={(e) => {
-                          setNote((prev) => ({ ...prev, [key]: e.target.value }))
-                          setSaveSource('manual')
-                        }}
-                        rows={5}
-                        disabled={streaming}
-                      />
-                    </label>
-                  )}
+              <div key={key}>
+                {pendingSection ? (
+                  <SoapSectionDiff
+                    label={label}
+                    before={pendingSection.before}
+                    after={pendingSection.after}
+                    onConfirm={() => confirmProposalSection(key)}
+                    onReject={() => rejectProposalSection(key)}
+                  />
+                ) : (
+                <label className="soap-section edit">
+                  <span>{label}</span>
+                  <textarea
+                    value={note[key]}
+                    onChange={(e) => {
+                      setNote((prev) => ({ ...prev, [key]: e.target.value }))
+                      setSaveSource('manual')
+                    }}
+                    rows={5}
+                    disabled={streaming}
+                  />
+                </label>
+                )}
 
-                  {key === 'assessment' && (
-                    <div className="icd-suggestions">
-                      <div className="icd-suggestions-heading">
-                        <h4>Suggested ICD-10 codes</h4>
-                        <button
-                          type="button"
-                          className="secondary small"
-                          disabled={!note.assessment.trim() || icdLoading}
-                          onClick={() => void runIcdSuggest()}
-                        >
-                          {icdLoading ? 'Suggesting…' : 'Suggest codes'}
-                        </button>
-                      </div>
-                      {icdError && (
-                        <p className="error" role="alert">
-                          {icdError}
-                        </p>
-                      )}
-                      {icdSuggestions.length === 0 && !icdLoading && (
-                        <p className="empty">
-                          No suggestions yet — generate or write an assessment, then click
-                          Suggest codes.
-                        </p>
-                      )}
-                      <ul className="icd-list">
-                        {icdSuggestions.map((s) => (
-                          <li key={s.id} className={`icd-item icd-${s.status}`}>
-                            <span className="icd-code">{s.code}</span>
-                            <span className="icd-desc">{s.description}</span>
-                            <span className="icd-sim">{Math.round(s.similarity * 100)}%</span>
-                            {s.status === 'suggested' ? (
-                              <span className="icd-actions">
-                                <button
-                                  type="button"
-                                  className="secondary small"
-                                  onClick={() => handleIcdStatus(s.id, 'accepted')}
-                                >
-                                  Accept
-                                </button>
-                                <button
-                                  type="button"
-                                  className="secondary small"
-                                  onClick={() => handleIcdStatus(s.id, 'rejected')}
-                                >
-                                  Reject
-                                </button>
-                              </span>
-                            ) : (
-                              <span className={`icd-status-badge icd-${s.status}`}>
-                                {s.status === 'accepted' ? '✓ accepted' : '✕ rejected'}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
+                {key === 'assessment' && (
+                  <div className="icd-suggestions">
+                    <div className="icd-suggestions-heading">
+                      <h4>Suggested ICD-10 codes</h4>
+                      <button
+                        type="button"
+                        className="secondary small"
+                        disabled={!note.assessment.trim() || icdLoading}
+                        onClick={() => void runIcdSuggest()}
+                      >
+                        {icdLoading ? 'Suggesting…' : 'Suggest codes'}
+                      </button>
                     </div>
-                  )}
-                </div>
+                    {icdError && (
+                      <p className="error" role="alert">
+                        {icdError}
+                      </p>
+                    )}
+                    {icdSuggestions.length === 0 && !icdLoading && (
+                      <p className="empty">
+                        No suggestions yet — generate or write an assessment, then click
+                        Suggest codes.
+                      </p>
+                    )}
+                    <ul className="icd-list">
+                      {icdSuggestions.map((s) => (
+                        <li key={s.id} className={`icd-item icd-${s.status}`}>
+                          <span className="icd-code">{s.code}</span>
+                          <span className="icd-desc">{s.description}</span>
+                          <span className="icd-sim">{Math.round(s.similarity * 100)}%</span>
+                          {s.status === 'suggested' ? (
+                            <span className="icd-actions">
+                              <button
+                                type="button"
+                                className="secondary small"
+                                onClick={() => handleIcdStatus(s.id, 'accepted')}
+                              >
+                                Accept
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary small"
+                                onClick={() => handleIcdStatus(s.id, 'rejected')}
+                              >
+                                Reject
+                              </button>
+                            </span>
+                          ) : (
+                            <span className={`icd-status-badge icd-${s.status}`}>
+                              {s.status === 'accepted' ? '✓ accepted' : '✕ rejected'}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
               )
             })}
           </div>
 
-          <div className="panel icd-search-widget">
-            <h3>ICD-10 code search</h3>
-            <input
-              type="text"
-              placeholder="Type a symptom or condition, e.g. &quot;shortness of breath&quot;…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            {searching && <p className="empty">Searching…</p>}
-            {searchError && (
-              <p className="error" role="alert">
-                {searchError}
-              </p>
-            )}
-            {searchResults.length > 0 && (
-              <ul className="icd-list">
-                {searchResults.map((r) => (
-                  <li key={r.code} className="icd-item">
-                    <span className="icd-code">{r.code}</span>
-                    <span className="icd-desc">{r.description}</span>
-                    <button
-                      type="button"
-                      className="secondary small"
-                      onClick={() => appendToAssessment(r.code, r.description)}
-                    >
-                      + Add to Assessment
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <details className="disclosure">
+            <summary>
+              <span className="disclosure-title">ICD-10 code search</span>
+              <span className="disclosure-hint">Look up any code</span>
+            </summary>
+            <div className="disclosure-body">
+              <input
+                type="text"
+                placeholder="Type a symptom or condition, e.g. &quot;shortness of breath&quot;…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searching && <p className="empty">Searching…</p>}
+              {searchError && (
+                <p className="error" role="alert">
+                  {searchError}
+                </p>
+              )}
+              {searchResults.length > 0 && (
+                <ul className="icd-list">
+                  {searchResults.map((r) => (
+                    <li key={r.code} className="icd-item">
+                      <span className="icd-code">{r.code}</span>
+                      <span className="icd-desc">{r.description}</span>
+                      <button
+                        type="button"
+                        className="secondary small"
+                        onClick={() => appendToAssessment(r.code, r.description)}
+                      >
+                        + Add to Assessment
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
 
-          <div className="versions">
-            <h3>Version history</h3>
-            {versions.length === 0 ? (
-              <p className="empty">Saved versions will appear here.</p>
-            ) : (
-              <ul>
-                {versions.map((v) => (
-                  <li key={v.id}>
-                    <strong>v{v.version_number}</strong>
-                    {' · '}
-                    {new Date(v.created_at).toLocaleString()}
-                    {' · '}
-                    {v.source}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <details className="disclosure">
+            <summary>
+              <span className="disclosure-title">Version history</span>
+              {versions.length > 0 && <span className="disclosure-count">{versions.length}</span>}
+            </summary>
+            <div className="disclosure-body">
+              {versions.length === 0 ? (
+                <p className="empty">Saved versions will appear here.</p>
+              ) : (
+                <ul className="version-list">
+                  {versions.map((v) => (
+                    <li key={v.id}>
+                      <strong>v{v.version_number}</strong>
+                      {' · '}
+                      {new Date(v.created_at).toLocaleString()}
+                      {' · '}
+                      <span className={`version-source version-source-${v.source}`}>
+                        {v.source === 'voice_session' ? 'voice' : 'manual'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
         </section>
       </main>
     </div>

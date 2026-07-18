@@ -4,6 +4,12 @@ import { createEncounter, getPatientDetail } from '../api'
 import { useAuth } from '../auth'
 import type { PatientDetail } from '../types'
 
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Not started',
+  active: 'In progress',
+  saved: 'Saved',
+}
+
 export default function PatientDetailPage() {
   const { patientId } = useParams()
   const id = Number(patientId)
@@ -101,11 +107,14 @@ export default function PatientDetailPage() {
             {encounters.map((enc) => (
               <li key={enc.id}>
                 <Link to={`/encounters/${enc.id}`}>
-                  {enc.created_at ? new Date(enc.created_at).toLocaleString() : 'Unknown date'}
-                  {' · '}
-                  {enc.status}
-                  {' · '}
-                  {enc.has_note ? 'has note' : 'no note yet'}
+                  <span>
+                    {enc.created_at ? new Date(enc.created_at).toLocaleString() : 'Unknown date'}
+                    {' · '}
+                    {enc.has_note ? 'has note' : 'no note yet'}
+                  </span>
+                  <span className={`encounter-status-chip status-${enc.status}`}>
+                    {STATUS_LABELS[enc.status] ?? enc.status}
+                  </span>
                 </Link>
               </li>
             ))}

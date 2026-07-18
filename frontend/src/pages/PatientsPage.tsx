@@ -4,6 +4,12 @@ import { listPatients } from '../api'
 import { useAuth } from '../auth'
 import type { PatientSummary } from '../types'
 
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Not started',
+  active: 'In progress',
+  saved: 'Saved',
+}
+
 export default function PatientsPage() {
   const { token, user, logout } = useAuth()
   const [patients, setPatients] = useState<PatientSummary[]>([])
@@ -69,6 +75,11 @@ export default function PatientsPage() {
                 <span>DOB {p.date_of_birth}</span>
               </div>
               <div className="patient-row-meta">
+                {p.last_status && (
+                  <span className={`encounter-status-chip status-${p.last_status}`}>
+                    {STATUS_LABELS[p.last_status] ?? p.last_status}
+                  </span>
+                )}
                 <span>
                   {p.encounter_count} encounter{p.encounter_count === 1 ? '' : 's'}
                 </span>
