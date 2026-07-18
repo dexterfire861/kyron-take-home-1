@@ -85,6 +85,16 @@ export default function NewEncounterPage() {
           </p>
         )}
       </form>
+
+      <div className="panel next-steps">
+        <p className="panel-eyebrow">What happens next</p>
+        <ol className="next-steps-list">
+          <li>Capture the visit as a transcript, typed observations, or live dictation.</li>
+          <li>Generate a streaming SOAP note from that input.</li>
+          <li>Review and refine the note — edit sections, add ICD-10 codes, or talk through changes.</li>
+          <li>Save to persist the note and record a version.</li>
+        </ol>
+      </div>
     </div>
   )
 }
