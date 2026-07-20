@@ -18,6 +18,13 @@ def login():
     user = User.query.filter_by(email=email).first()
     if user is None or not user.check_password(password):
         return jsonify({"error": "Invalid email or password"}), 401
+    if not user.is_active:
+        return jsonify(
+            {
+                "error": "account_deactivated",
+                "message": "This account has been deactivated. Contact an administrator.",
+            }
+        ), 403
 
     token = create_access_token(user)
     return jsonify({"access_token": token, "user": user.to_dict()})

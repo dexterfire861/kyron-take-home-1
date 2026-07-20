@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
+  ApiError,
   getEncounter,
   getIcdSuggestions,
+  listTemplates,
+  saveEncounterDraft,
   saveNote,
   searchIcdCodes,
   suggestIcdCodes,
@@ -21,9 +24,16 @@ import {
   type IcdSearchResult,
   type IcdSuggestion,
   type InputType,
+  type NoteTemplate,
   type NoteVersion,
   type SoapNote,
 } from '../types'
+
+const DRAFT_STORAGE_PREFIX = 'kyron_draft_'
+
+function draftStorageKey(encounterId: number) {
+  return `${DRAFT_STORAGE_PREFIX}${encounterId}`
+}
 
 type StageId = 'capture' | 'generate' | 'review' | 'save'
 
@@ -108,6 +118,15 @@ export default function EncounterWorkspacePage() {
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
 
+  const [templates, setTemplates] = useState<NoteTemplate[]>([])
+  const [templateId, setTemplateId] = useState<number | null>(null)
+  const [priorNoteCount, setPriorNoteCount] = useState(0)
+  const [returningPatient, setReturningPatient] = useState(false)
+  const [sessionExpired, setSessionExpired] = useState(false)
+  const [accountDeactivated, setAccountDeactivated] = useState(false)
+  const [draftSaving, setDraftSaving] = useState(false)
+  const skipNextAutosave = useRef(true)
+
   const { generate, streaming, error: streamError, setError: setStreamError } =
     useSoapStream(token)
 
@@ -154,14 +173,51 @@ export default function EncounterWorkspacePage() {
       setSaveSource('manual')
       rejectAllProposals()
       let finalNote: SoapNote = EMPTY_SOAP
-      void generate(encounter.id, trimmed, 'transcript', (n) => {
-        finalNote = n
-        setNote(n)
-      }).then(() => {
+      void generate(
+        encounter.id,
+        trimmed,
+        'transcript',
+        (n) => {
+          finalNote = n
+          setNote(n)
+        },
+        {
+          templateId,
+          onContext: (ctx) => {
+            setPriorNoteCount(ctx.prior_note_count)
+            setReturningPatient(ctx.returning_patient)
+          },
+        },
+      ).then(() => {
         if (finalNote.assessment.trim()) void runIcdSuggest()
       })
     }, 1500)
-  }, [encounter, generate, rejectAllProposals])
+  }, [encounter, generate, rejectAllProposals, templateId])
+
+  function handleAuthFailure(err: unknown) {
+    if (err instanceof ApiError) {
+      if (err.code === 'account_deactivated') {
+        setAccountDeactivated(true)
+        return true
+      }
+      if (err.status === 401) {
+        setSessionExpired(true)
+        if (Number.isFinite(id)) {
+          sessionStorage.setItem(
+            draftStorageKey(id),
+            JSON.stringify({
+              input_text: textRef.current,
+              input_type: inputType,
+              template_id: templateId,
+              ...note,
+            }),
+          )
+        }
+        return true
+      }
+    }
+    return false
+  }
 
   const handleDictatedUtterance = useCallback(
     (utterance: string) => {
@@ -195,11 +251,16 @@ export default function EncounterWorkspacePage() {
 
   useEffect(() => {
     if (!token || !Number.isFinite(id)) return
-    getEncounter(token, id)
-      .then((enc) => {
+    skipNextAutosave.current = true
+    Promise.all([getEncounter(token, id), listTemplates(token)])
+      .then(([enc, templateData]) => {
         setEncounter(enc)
+        setTemplates(templateData.templates)
         updateText(enc.input_text || '')
         setInputType(enc.input_type || 'transcript')
+        setTemplateId(enc.template_id ?? templateData.templates[0]?.id ?? null)
+        setPriorNoteCount(enc.prior_note_count ?? 0)
+        setReturningPatient(Boolean(enc.returning_patient))
         const loadedNote: SoapNote = enc.note
           ? {
               subjective: enc.note.subjective,
@@ -208,17 +269,72 @@ export default function EncounterWorkspacePage() {
               plan: enc.note.plan,
             }
           : EMPTY_SOAP
-        setNote(loadedNote)
+
+        // Flush any draft captured after a session expiry
+        const cached = sessionStorage.getItem(draftStorageKey(id))
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached) as Partial<SoapNote> & {
+              input_text?: string
+              input_type?: InputType
+              template_id?: number
+            }
+            if (parsed.input_text) updateText(parsed.input_text)
+            if (parsed.input_type) setInputType(parsed.input_type)
+            if (parsed.template_id) setTemplateId(parsed.template_id)
+            setNote({
+              subjective: parsed.subjective ?? loadedNote.subjective,
+              objective: parsed.objective ?? loadedNote.objective,
+              assessment: parsed.assessment ?? loadedNote.assessment,
+              plan: parsed.plan ?? loadedNote.plan,
+            })
+            sessionStorage.removeItem(draftStorageKey(id))
+            setSessionExpired(false)
+          } catch {
+            setNote(loadedNote)
+          }
+        } else {
+          setNote(loadedNote)
+        }
         savedSnapshotRef.current = loadedNote
         setVersions(enc.versions ?? [])
       })
       .catch((err) => {
+        if (handleAuthFailure(err)) return
         setLoadError(err instanceof Error ? err.message : 'Failed to load encounter')
       })
     getIcdSuggestions(token, id)
       .then((result) => setIcdSuggestions(result.suggestions))
       .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, id])
+
+  // Debounced draft autosave for cross-device session persistence
+  useEffect(() => {
+    if (!token || !encounter || skipNextAutosave.current) {
+      skipNextAutosave.current = false
+      return
+    }
+    const timer = setTimeout(() => {
+      setDraftSaving(true)
+      void saveEncounterDraft(token, encounter.id, {
+        input_text: text,
+        input_type: inputType,
+        template_id: templateId,
+        ...note,
+      })
+        .then((enc) => {
+          setEncounter(enc)
+          setSessionExpired(false)
+        })
+        .catch((err) => {
+          handleAuthFailure(err)
+        })
+        .finally(() => setDraftSaving(false))
+    }, 1500)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, inputType, templateId, note.subjective, note.objective, note.assessment, note.plan])
 
   const runIcdSuggest = useCallback(async () => {
     if (!token || !Number.isFinite(id)) return
@@ -295,10 +411,22 @@ export default function EncounterWorkspacePage() {
     setSaveSource('manual')
     rejectAllProposals()
     let finalNote: SoapNote = EMPTY_SOAP
-    await generate(encounter.id, trimmed, inputType, (n) => {
-      finalNote = n
-      setNote(n)
-    })
+    await generate(
+      encounter.id,
+      trimmed,
+      inputType,
+      (n) => {
+        finalNote = n
+        setNote(n)
+      },
+      {
+        templateId,
+        onContext: (ctx) => {
+          setPriorNoteCount(ctx.prior_note_count)
+          setReturningPatient(ctx.returning_patient)
+        },
+      },
+    )
     if (finalNote.assessment.trim()) {
       void runIcdSuggest()
     }
@@ -330,8 +458,11 @@ export default function EncounterWorkspacePage() {
       setDirty(false)
       setLastSavedAt(new Date())
       setEncounter((prev) => (prev ? { ...prev, status: 'saved' } : prev))
+      setSessionExpired(false)
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Save failed')
+      if (!handleAuthFailure(err)) {
+        setSaveError(err instanceof Error ? err.message : 'Save failed')
+      }
     } finally {
       setSaving(false)
     }
@@ -446,6 +577,13 @@ export default function EncounterWorkspacePage() {
                 <span className={`encounter-status-chip status-${encounter.status}`}>
                   {ENCOUNTER_STATUS_LABELS[encounter.status] ?? encounter.status}
                 </span>
+                <span
+                  className={`patient-history-badge ${returningPatient ? 'returning' : 'new'}`}
+                >
+                  {returningPatient
+                    ? `Returning patient — ${priorNoteCount} prior note${priorNoteCount === 1 ? '' : 's'}`
+                    : 'New patient'}
+                </span>
               </div>
               <div className="patient-context-meta">
                 {patient
@@ -455,6 +593,7 @@ export default function EncounterWorkspacePage() {
                   : 'Patient'}
                 {' · '}
                 {user?.full_name}
+                {draftSaving ? ' · Saving draft…' : ''}
               </div>
             </div>
           </div>
@@ -467,6 +606,24 @@ export default function EncounterWorkspacePage() {
             </button>
           </div>
         </div>
+
+        {accountDeactivated && (
+          <div className="workspace-banner banner-error" role="alert">
+            Your account has been deactivated by an administrator. Your draft is
+            preserved — contact an admin to restore access.
+            <button type="button" className="secondary small" onClick={logout}>
+              Sign out
+            </button>
+          </div>
+        )}
+        {sessionExpired && !accountDeactivated && (
+          <div className="workspace-banner banner-warning" role="alert">
+            Your session expired. Draft is saved locally — sign in again to continue.
+            <button type="button" className="secondary small" onClick={logout}>
+              Sign in again
+            </button>
+          </div>
+        )}
 
         <div className={`status-strip status-tone-${status.tone}`}>
           <span className="status-dot" aria-hidden="true" />
@@ -494,6 +651,23 @@ export default function EncounterWorkspacePage() {
       <main className="layout">
         <form className="panel input-panel" onSubmit={handleGenerate}>
           <p className="panel-eyebrow">Capture</p>
+          <label className="field">
+            <span>Note template</span>
+            <select
+              value={templateId ?? ''}
+              onChange={(e) =>
+                setTemplateId(e.target.value ? Number(e.target.value) : null)
+              }
+              disabled={streaming || accountDeactivated}
+            >
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <fieldset className="input-type">
             <legend>Input type</legend>
             <label>
@@ -503,6 +677,7 @@ export default function EncounterWorkspacePage() {
                 value="transcript"
                 checked={inputType === 'transcript'}
                 onChange={() => setInputType('transcript')}
+                disabled={accountDeactivated}
               />
               Encounter transcript
             </label>
@@ -513,6 +688,7 @@ export default function EncounterWorkspacePage() {
                 value="observations"
                 checked={inputType === 'observations'}
                 onChange={() => setInputType('observations')}
+                disabled={accountDeactivated}
               />
               Clinical observations
             </label>
@@ -574,7 +750,7 @@ export default function EncounterWorkspacePage() {
           />
           {partialText && <p className="dictation-partial">…{partialText}</p>}
 
-          <button type="submit" disabled={streaming || !text.trim()}>
+          <button type="submit" disabled={streaming || !text.trim() || accountDeactivated}>
             {streaming ? 'Streaming SOAP…' : hasNote ? 'Regenerate SOAP note' : 'Generate SOAP note'}
           </button>
           {(streamError || saveError) && (
@@ -807,6 +983,7 @@ export default function EncounterWorkspacePage() {
                       <span className={`version-source version-source-${v.source}`}>
                         {v.source === 'voice_session' ? 'voice' : 'manual'}
                       </span>
+                      {v.created_by_name ? ` · ${v.created_by_name}` : ''}
                     </li>
                   ))}
                 </ul>

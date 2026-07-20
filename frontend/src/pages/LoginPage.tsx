@@ -11,7 +11,9 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false)
 
   if (!loading && user) {
-    return <Navigate to="/patients" replace />
+    return (
+      <Navigate to={user.role === 'admin' ? '/admin' : '/patients'} replace />
+    )
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -19,8 +21,8 @@ export default function LoginPage() {
     setSubmitting(true)
     setError(null)
     try {
-      await login(email.trim(), password)
-      navigate('/patients')
+      const loggedIn = await login(email.trim(), password)
+      navigate(loggedIn.role === 'admin' ? '/admin' : '/patients')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {
@@ -31,8 +33,8 @@ export default function LoginPage() {
   return (
     <div className="app narrow">
       <header className="header">
-        <h1>SOAP Note Generator</h1>
-        <p>Sign in as a provider to start a patient encounter.</p>
+        <h1>Kyron Clinical Scribe</h1>
+        <p>Sign in as a provider or admin.</p>
       </header>
 
       <form className="panel" onSubmit={handleSubmit}>
@@ -65,7 +67,9 @@ export default function LoginPage() {
           </p>
         )}
         <p className="hint">
-          Demo: provider1@kyron.local / provider123
+          Provider: provider1@kyron.local / provider123
+          <br />
+          Admin: admin@kyron.local / admin123
         </p>
       </form>
     </div>

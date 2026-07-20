@@ -14,6 +14,18 @@ export type User = {
   email: string
   full_name: string
   role: 'provider' | 'admin'
+  is_active?: boolean
+}
+
+export type NoteTemplate = {
+  id: number
+  name: string
+  slug: string
+  description: string
+  system_prompt_addon: string
+  is_active: boolean
+  created_at: string | null
+  updated_at: string | null
 }
 
 export type Patient = {
@@ -31,6 +43,7 @@ export type NoteVersion = {
   snapshot: SoapNote
   source: 'manual' | 'voice_session'
   created_by: number
+  created_by_name?: string | null
   created_at: string
 }
 
@@ -44,14 +57,19 @@ export type Encounter = {
   id: number
   provider_id: number
   patient_id: number
+  template_id?: number | null
   patient: Patient | null
+  template?: NoteTemplate | null
   input_text: string
   input_type: InputType
   status: string
+  last_draft_at?: string | null
   created_at: string | null
   updated_at: string | null
   note: Note | null
   versions?: NoteVersion[]
+  prior_note_count?: number
+  returning_patient?: boolean
 }
 
 export type PatientSummary = Patient & {
@@ -91,6 +109,11 @@ export type IcdSearchResult = {
   code: string
   description: string
   similarity: number
+}
+
+export type AdminEncounterRow = Encounter & {
+  provider?: { id: number; full_name: string; email: string }
+  has_note?: boolean
 }
 
 export const EMPTY_SOAP: SoapNote = {

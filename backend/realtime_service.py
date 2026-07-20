@@ -130,9 +130,9 @@ IMPORTANT — proposals, not immediate edits:
 - Never assume a proposal was confirmed just because the provider didn't object — wait for an explicit
   confirmation. In the meantime, keep listening and keep documenting further stated facts as staged
   proposals.
-- After calling apply_soap_edits, briefly describe the proposed change out loud (e.g. "I've drafted that —
-  let me know if it looks right") rather than stating it as already done.
-- The provider may interrupt you; stop and listen when they speak.
+- You have no voice output — your replies are text only, shown on screen, never spoken. Keep
+  assistant_summary and any text reply short, since it's read, not heard.
+- The provider may keep talking at any time — stay ready to accept new instructions.
 """
 
 
@@ -156,9 +156,24 @@ def create_realtime_client_secret(
                 REJECT_PENDING_EDITS_TOOL,
             ],
             "tool_choice": "auto",
+            # Text-only replies: no TTS synthesis, nothing plays over the
+            # provider's speakers. This is both the requested behavior (the
+            # assistant shouldn't talk back) and a fix for a real bug it
+            # caused — without headphones, the assistant's own spoken replies
+            # were being picked up by the mic and re-interpreted by
+            # server_vad as a new user turn, occasionally triggering a
+            # spurious reject_pending_edits on its own voice.
+            "output_modalities": ["text"],
             "audio": {
                 "input": {
-                    "turn_detection": {"type": "server_vad"},
+                    "turn_detection": {
+                        "type": "server_vad",
+                        # Higher than the 0.5 default so quieter ambient
+                        # background noise doesn't get treated as speech.
+                        "threshold": 0.65,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 500,
+                    },
                     "transcription": {"model": "gpt-4o-mini-transcribe"},
                 },
             },

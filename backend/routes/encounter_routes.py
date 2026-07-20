@@ -8,9 +8,9 @@ from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 from auth import provider_required
 from db import db
 from icd10_service import suggest_for_text
-from models import Encounter, Note, NoteIcdSuggestion, NoteVersion, Patient, parse_dob
+from models import Encounter, Note, NoteIcdSuggestion, NoteTemplate, NoteVersion, Patient, parse_dob
 from realtime_service import create_realtime_client_secret, create_transcription_client_secret
-from soap_service import stream_soap_note
+from soap_service import fetch_prior_notes, stream_soap_note
 
 encounters_bp = Blueprint("encounters", __name__, url_prefix="/api")
 
@@ -36,6 +36,7 @@ def create_encounter():
     first_name = (payload.get("first_name") or "").strip()
     last_name = (payload.get("last_name") or "").strip()
     dob_raw = (payload.get("date_of_birth") or "").strip()
+    template_id = payload.get("template_id")
 
     if not first_name or not last_name or not dob_raw:
         return jsonify(
@@ -48,6 +49,9 @@ def create_encounter():
         return jsonify({"error": "date_of_birth must be YYYY-MM-DD"}), 400
 
     provider = g.current_user
+    if provider.role == "admin":
+        return jsonify({"error": "Admins cannot create provider encounters"}), 403
+
     patient = Patient.query.filter_by(
         provider_id=provider.id,
         first_name=first_name,
@@ -65,14 +69,45 @@ def create_encounter():
         db.session.add(patient)
         db.session.flush()
 
+    resolved_template_id = None
+    if template_id is not None:
+        template = db.session.get(NoteTemplate, int(template_id))
+        if template is None or not template.is_active:
+            return jsonify({"error": "Invalid template_id"}), 400
+        resolved_template_id = template.id
+    else:
+        default = NoteTemplate.query.filter_by(
+            slug="new_patient_eval", is_active=True
+        ).first()
+        resolved_template_id = default.id if default else None
+
+    prior_count = (
+        Encounter.query.filter_by(patient_id=patient.id, status="saved").count()
+    )
+
     encounter = Encounter(
         provider_id=provider.id,
         patient_id=patient.id,
+        template_id=resolved_template_id,
         status="draft",
     )
     db.session.add(encounter)
     db.session.commit()
-    return jsonify({"encounter": encounter.to_dict()}), 201
+    data = encounter.to_dict()
+    data["prior_note_count"] = prior_count
+    data["returning_patient"] = prior_count > 0
+    return jsonify({"encounter": data}), 201
+
+
+@encounters_bp.get("/templates")
+@provider_required
+def list_active_templates():
+    templates = (
+        NoteTemplate.query.filter_by(is_active=True)
+        .order_by(NoteTemplate.name.asc())
+        .all()
+    )
+    return jsonify({"templates": [t.to_dict() for t in templates]})
 
 
 @encounters_bp.get("/encounters/<int:encounter_id>")
@@ -87,9 +122,66 @@ def get_encounter(encounter_id: int):
             v.to_dict()
             for v in encounter.note.versions.order_by(NoteVersion.version_number.desc())
         ]
+    prior_count = (
+        Encounter.query.filter(
+            Encounter.patient_id == encounter.patient_id,
+            Encounter.status == "saved",
+            Encounter.id != encounter.id,
+        ).count()
+    )
     data = encounter.to_dict()
     data["versions"] = versions
+    data["prior_note_count"] = prior_count
+    data["returning_patient"] = prior_count > 0
     return jsonify({"encounter": data})
+
+
+@encounters_bp.patch("/encounters/<int:encounter_id>/draft")
+@provider_required
+def save_encounter_draft(encounter_id: int):
+    encounter = _get_owned_encounter(encounter_id)
+    if encounter is None:
+        return jsonify({"error": "Encounter not found"}), 404
+    if g.current_user.role != "admin" and encounter.provider_id != g.current_user.id:
+        return jsonify({"error": "Encounter not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    if "input_text" in payload:
+        encounter.input_text = payload.get("input_text") or ""
+    if "input_type" in payload:
+        input_type = (payload.get("input_type") or "").strip().lower()
+        if input_type and input_type not in VALID_INPUT_TYPES:
+            return jsonify(
+                {"error": "input_type must be 'transcript' or 'observations'"}
+            ), 400
+        if input_type:
+            encounter.input_type = input_type
+    if "template_id" in payload:
+        tid = payload.get("template_id")
+        if tid is None:
+            encounter.template_id = None
+        else:
+            template = db.session.get(NoteTemplate, int(tid))
+            if template is None or not template.is_active:
+                return jsonify({"error": "Invalid template_id"}), 400
+            encounter.template_id = template.id
+
+    soap_keys = ("subjective", "objective", "assessment", "plan")
+    if any(k in payload for k in soap_keys):
+        note = encounter.note
+        if note is None:
+            note = Note(encounter_id=encounter.id)
+            db.session.add(note)
+        for key in soap_keys:
+            if key in payload:
+                setattr(note, key, (payload.get(key) or "").strip())
+        note.updated_at = datetime.now(timezone.utc)
+
+    encounter.last_draft_at = datetime.now(timezone.utc)
+    if encounter.status == "draft" and (encounter.input_text or "").strip():
+        encounter.status = "active"
+    db.session.commit()
+    return jsonify({"encounter": encounter.to_dict()})
 
 
 @encounters_bp.post("/encounters/<int:encounter_id>/generate")
@@ -112,16 +204,40 @@ def generate_encounter_note(encounter_id: int):
             {"error": "input_type must be 'transcript' or 'observations'"}
         ), 400
 
+    if "template_id" in payload and payload.get("template_id") is not None:
+        template = db.session.get(NoteTemplate, int(payload["template_id"]))
+        if template is None or not template.is_active:
+            return jsonify({"error": "Invalid template_id"}), 400
+        encounter.template_id = template.id
+
+    # Always reload template from DB at generate time (admin edits take effect immediately)
+    template_addon = None
+    if encounter.template_id:
+        live_template = db.session.get(NoteTemplate, encounter.template_id)
+        if live_template and live_template.is_active:
+            template_addon = live_template.system_prompt_addon
+
+    prior_history = fetch_prior_notes(
+        patient_id=encounter.patient_id,
+        exclude_encounter_id=encounter.id,
+    )
+
     encounter.input_text = text
     encounter.input_type = input_type
     encounter.status = "active"
+    encounter.last_draft_at = datetime.now(timezone.utc)
     db.session.commit()
     eid = encounter.id
 
     def event_stream():
         final_note = None
         try:
-            for item in stream_soap_note(text=text, input_type=input_type):
+            for item in stream_soap_note(
+                text=text,
+                input_type=input_type,
+                template_addon=template_addon,
+                prior_history=prior_history,
+            ):
                 event = item["event"]
                 data = item["data"]
                 if event == "done":

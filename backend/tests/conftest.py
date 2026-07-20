@@ -62,6 +62,9 @@ def app():
     with flask_app.app_context():
         db.session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         db.session.commit()
+        # Recreate schema so model changes (e.g. is_active, note_templates) apply
+        # even when the test DB already existed from an older revision.
+        db.drop_all()
         db.create_all()
     yield flask_app
     with flask_app.app_context():

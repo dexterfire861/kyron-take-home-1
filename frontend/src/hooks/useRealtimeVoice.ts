@@ -33,7 +33,6 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
   const [heardText, setHeardText] = useState<string>('')
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const dcRef = useRef<RTCDataChannel | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const argBufferRef = useRef<Record<string, string>>({})
   const callNameRef = useRef<Record<string, string>>({})
@@ -58,9 +57,6 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
     dcRef.current = null
     pcRef.current = null
     streamRef.current = null
-    if (audioRef.current) {
-      audioRef.current.srcObject = null
-    }
     setStatus('idle')
   }, [])
 
@@ -281,12 +277,8 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
         const pc = new RTCPeerConnection()
         pcRef.current = pc
 
-        const audioEl = audioRef.current ?? new Audio()
-        audioEl.autoplay = true
-        audioRef.current = audioEl
-        pc.ontrack = (e) => {
-          audioEl.srcObject = e.streams[0]
-        }
+        // No pc.ontrack wiring — the session is configured for text-only
+        // output_modalities, so no audio track is ever sent back to play.
 
         const ms = await navigator.mediaDevices.getUserMedia({ audio: true })
         streamRef.current = ms

@@ -19,6 +19,7 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     full_name = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(32), nullable=False, default="provider")
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
 
     patients = db.relationship("Patient", back_populates="provider", lazy="dynamic")
@@ -36,6 +37,7 @@ class User(db.Model):
             "email": self.email,
             "full_name": self.full_name,
             "role": self.role,
+            "is_active": self.is_active,
         }
 
 
@@ -77,9 +79,13 @@ class Encounter(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     provider_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     patient_id = db.Column(db.Integer, db.ForeignKey("patients.id"), nullable=False)
+    template_id = db.Column(
+        db.Integer, db.ForeignKey("note_templates.id"), nullable=True
+    )
     input_text = db.Column(db.Text, nullable=False, default="")
     input_type = db.Column(db.String(32), nullable=False, default="transcript")
     status = db.Column(db.String(32), nullable=False, default="draft")
+    last_draft_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = db.Column(
         db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
@@ -87,6 +93,7 @@ class Encounter(db.Model):
 
     provider = db.relationship("User", back_populates="encounters")
     patient = db.relationship("Patient", back_populates="encounters")
+    template = db.relationship("NoteTemplate", back_populates="encounters")
     note = db.relationship(
         "Note", back_populates="encounter", uselist=False, cascade="all, delete-orphan"
     )
@@ -96,16 +103,48 @@ class Encounter(db.Model):
             "id": self.id,
             "provider_id": self.provider_id,
             "patient_id": self.patient_id,
+            "template_id": self.template_id,
             "patient": self.patient.to_dict() if self.patient else None,
+            "template": self.template.to_dict() if self.template else None,
             "input_text": self.input_text,
             "input_type": self.input_type,
             "status": self.status,
+            "last_draft_at": self.last_draft_at.isoformat() if self.last_draft_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
         if include_note:
             data["note"] = self.note.to_dict() if self.note else None
         return data
+
+
+class NoteTemplate(db.Model):
+    __tablename__ = "note_templates"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    slug = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    description = db.Column(db.Text, nullable=False, default="")
+    system_prompt_addon = db.Column(db.Text, nullable=False, default="")
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+    encounters = db.relationship("Encounter", back_populates="template", lazy="dynamic")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "slug": self.slug,
+            "description": self.description,
+            "system_prompt_addon": self.system_prompt_addon,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
 
 
 class Note(db.Model):
@@ -171,6 +210,7 @@ class NoteVersion(db.Model):
             "snapshot": self.snapshot,
             "source": self.source,
             "created_by": self.created_by,
+            "created_by_name": self.creator.full_name if self.creator else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

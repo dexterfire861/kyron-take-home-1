@@ -14,6 +14,13 @@ export function useSoapStream(token: string | null) {
       text: string,
       inputType: InputType,
       onUpdate: (note: SoapNote) => void,
+      options?: {
+        templateId?: number | null
+        onContext?: (data: {
+          prior_note_count: number
+          returning_patient: boolean
+        }) => void
+      },
     ) => {
       if (!token) throw new Error('Not authenticated')
       abortRef.current?.abort()
@@ -32,6 +39,7 @@ export function useSoapStream(token: string | null) {
           text,
           inputType,
           {
+            onContext: options?.onContext,
             onSectionStart(section) {
               draft = { ...draft, [section]: '' }
               onUpdate(draft)
@@ -53,6 +61,7 @@ export function useSoapStream(token: string | null) {
             },
           },
           controller.signal,
+          options?.templateId,
         )
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {

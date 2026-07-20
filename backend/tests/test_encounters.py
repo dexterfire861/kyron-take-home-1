@@ -14,7 +14,7 @@ from models import Note, NoteVersion
 def fake_stream(events):
     """Build a fake `stream_soap_note` replacement that yields fixed events."""
 
-    def _fake(text, input_type="observations"):
+    def _fake(text, input_type="observations", **_kwargs):
         for event, data in events:
             yield {"event": event, "data": data}
 
@@ -266,7 +266,7 @@ def test_generate_with_no_markers_persists_empty_note_without_crashing(
 def test_generate_stream_error_event_when_llm_raises(
     client, auth_headers, provider, make_patient, make_encounter, monkeypatch
 ):
-    def _raise(text, input_type="observations"):
+    def _raise(text, input_type="observations", **_kwargs):
         raise RuntimeError("OPENAI_API_KEY missing")
         yield  # pragma: no cover - makes this a generator function
 

@@ -52,6 +52,13 @@ def login_required(fn: Callable):
             return jsonify({"error": "Invalid or expired token"}), 401
         if user is None:
             return jsonify({"error": "User not found"}), 401
+        if not user.is_active:
+            return jsonify(
+                {
+                    "error": "account_deactivated",
+                    "message": "This account has been deactivated. Contact an administrator.",
+                }
+            ), 403
         g.current_user = user
         return fn(*args, **kwargs)
 
@@ -70,6 +77,17 @@ def provider_required(fn: Callable):
     def wrapper(*args, **kwargs):
         if g.current_user.role not in ("provider", "admin"):
             return jsonify({"error": "Provider access required"}), 403
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def admin_required(fn: Callable):
+    @wraps(fn)
+    @login_required
+    def wrapper(*args, **kwargs):
+        if g.current_user.role != "admin":
+            return jsonify({"error": "Admin access required"}), 403
         return fn(*args, **kwargs)
 
     return wrapper

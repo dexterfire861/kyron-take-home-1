@@ -123,9 +123,15 @@ class _FakeOpenAIClient:
         self.chat = _FakeChat(chunks)
 
 
+CLINICAL_INPUT = (
+    "Patient reports cough and fever for 3 days with mild shortness of breath. "
+    "Exam planned for upper respiratory infection evaluation."
+)
+
+
 def _run_stream(monkeypatch, chunks):
     monkeypatch.setattr(soap_service, "_client", lambda: _FakeOpenAIClient(chunks))
-    return list(soap_service.stream_soap_note("some input", input_type="observations"))
+    return list(soap_service.stream_soap_note(CLINICAL_INPUT, input_type="observations"))
 
 
 def test_stream_soap_note_happy_path_emits_full_event_sequence(monkeypatch):
@@ -142,6 +148,7 @@ def test_stream_soap_note_happy_path_emits_full_event_sequence(monkeypatch):
     events = _run_stream(monkeypatch, chunks)
 
     kinds = [e["event"] for e in events]
+    assert kinds[0] == "context"
     assert kinds.count("section_start") == 4
     assert kinds.count("section_end") == 4
     assert kinds[-1] == "done"
@@ -193,8 +200,8 @@ def test_stream_soap_note_with_no_markers_at_all_falls_back_to_empty_note(monkey
         "assessment": "",
         "plan": "",
     }
-    # no section_start/section_delta/section_end should have fired
-    assert all(e["event"] == "done" for e in events)
+    # context may fire first; no section_* events for unstructured output
+    assert all(e["event"] in {"context", "done"} for e in events)
 
 
 def test_stream_soap_note_out_of_order_headings_from_llm(monkeypatch):

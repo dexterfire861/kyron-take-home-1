@@ -4,6 +4,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 
 from db import db, migrate
+from routes.admin_routes import admin_bp
 from routes.auth_routes import auth_bp
 from routes.encounter_routes import encounters_bp
 from routes.patient_routes import patients_bp
@@ -52,6 +53,7 @@ def create_app() -> Flask:
     app.register_blueprint(auth_bp)
     app.register_blueprint(encounters_bp)
     app.register_blueprint(patients_bp)
+    app.register_blueprint(admin_bp)
 
     @app.get("/api/health")
     def health():

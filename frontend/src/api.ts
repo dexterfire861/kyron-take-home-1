@@ -1,10 +1,12 @@
 import { extractSseEvents } from './lib/sse'
 import type {
+  AdminEncounterRow,
   Encounter,
   IcdSearchResult,
   IcdSuggestion,
   InputType,
   Note,
+  NoteTemplate,
   NoteVersion,
   PatientDetail,
   PatientSummary,
@@ -14,6 +16,18 @@ import type {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5001'
 
+export class ApiError extends Error {
+  status: number
+  code?: string
+
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
 function authHeaders(token?: string | null): HeadersInit {
   const headers: HeadersInit = { 'Content-Type': 'application/json' }
   if (token) {
@@ -22,9 +36,16 @@ function authHeaders(token?: string | null): HeadersInit {
   return headers
 }
 
-async function parseError(response: Response): Promise<string> {
+async function parseError(response: Response): Promise<ApiError> {
   const data = await response.json().catch(() => ({}))
-  return typeof data.error === 'string' ? data.error : `Request failed (${response.status})`
+  const code = typeof data.error === 'string' ? data.error : undefined
+  const message =
+    typeof data.message === 'string'
+      ? data.message
+      : typeof data.error === 'string'
+        ? data.error
+        : `Request failed (${response.status})`
+  return new ApiError(message, response.status, code)
 }
 
 export async function login(
@@ -36,7 +57,7 @@ export async function login(
     headers: authHeaders(),
     body: JSON.stringify({ email, password }),
   })
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
@@ -44,7 +65,7 @@ export async function fetchMe(token: string): Promise<User> {
   const response = await fetch(`${API_BASE}/api/auth/me`, {
     headers: authHeaders(token),
   })
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   const data = await response.json()
   return data.user as User
 }
@@ -55,7 +76,7 @@ export async function listPatients(
   const response = await fetch(`${API_BASE}/api/patients`, {
     headers: authHeaders(token),
   })
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
@@ -66,20 +87,35 @@ export async function getPatientDetail(
   const response = await fetch(`${API_BASE}/api/patients/${patientId}`, {
     headers: authHeaders(token),
   })
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
+  return response.json()
+}
+
+export async function listTemplates(
+  token: string,
+): Promise<{ templates: NoteTemplate[] }> {
+  const response = await fetch(`${API_BASE}/api/templates`, {
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
 export async function createEncounter(
   token: string,
-  payload: { first_name: string; last_name: string; date_of_birth: string },
+  payload: {
+    first_name: string
+    last_name: string
+    date_of_birth: string
+    template_id?: number
+  },
 ): Promise<Encounter> {
   const response = await fetch(`${API_BASE}/api/encounters`, {
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify(payload),
   })
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   const data = await response.json()
   return data.encounter as Encounter
 }
@@ -91,12 +127,35 @@ export async function getEncounter(
   const response = await fetch(`${API_BASE}/api/encounters/${encounterId}`, {
     headers: authHeaders(token),
   })
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
+  const data = await response.json()
+  return data.encounter as Encounter
+}
+
+export async function saveEncounterDraft(
+  token: string,
+  encounterId: number,
+  payload: Partial<SoapNote> & {
+    input_text?: string
+    input_type?: InputType
+    template_id?: number | null
+  },
+): Promise<Encounter> {
+  const response = await fetch(
+    `${API_BASE}/api/encounters/${encounterId}/draft`,
+    {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify(payload),
+    },
+  )
+  if (!response.ok) throw await parseError(response)
   const data = await response.json()
   return data.encounter as Encounter
 }
 
 export type SoapStreamHandlers = {
+  onContext?: (data: { prior_note_count: number; returning_patient: boolean }) => void
   onSectionStart?: (section: keyof SoapNote) => void
   onSectionDelta?: (section: keyof SoapNote, delta: string) => void
   onSectionEnd?: (section: keyof SoapNote, text: string) => void
@@ -111,20 +170,22 @@ export async function streamSoapGenerate(
   inputType: InputType,
   handlers: SoapStreamHandlers,
   signal?: AbortSignal,
+  templateId?: number | null,
 ): Promise<void> {
+  const body: Record<string, unknown> = { text, input_type: inputType }
+  if (templateId != null) body.template_id = templateId
+
   const response = await fetch(
     `${API_BASE}/api/encounters/${encounterId}/generate`,
     {
       method: 'POST',
       headers: authHeaders(token),
-      body: JSON.stringify({ text, input_type: inputType }),
+      body: JSON.stringify(body),
       signal,
     },
   )
 
-  if (!response.ok) {
-    throw new Error(await parseError(response))
-  }
+  if (!response.ok) throw await parseError(response)
   if (!response.body) {
     throw new Error('Streaming is not supported in this browser')
   }
@@ -143,6 +204,7 @@ export async function streamSoapGenerate(
 
     for (const { event, data: dataLine } of events) {
       const data = JSON.parse(dataLine)
+      if (event === 'context') handlers.onContext?.(data)
       if (event === 'section_start') handlers.onSectionStart?.(data.section)
       if (event === 'section_delta') {
         handlers.onSectionDelta?.(data.section, data.delta)
@@ -170,7 +232,7 @@ export async function saveNote(
       body: JSON.stringify({ ...note, source }),
     },
   )
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
@@ -182,7 +244,7 @@ export async function suggestIcdCodes(
     `${API_BASE}/api/encounters/${encounterId}/icd10/suggest`,
     { method: 'POST', headers: authHeaders(token) },
   )
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
@@ -193,7 +255,7 @@ export async function getIcdSuggestions(
   const response = await fetch(`${API_BASE}/api/encounters/${encounterId}/icd10`, {
     headers: authHeaders(token),
   })
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
@@ -211,7 +273,7 @@ export async function updateIcdSuggestion(
       body: JSON.stringify({ status }),
     },
   )
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
@@ -223,7 +285,7 @@ export async function searchIcdCodes(
     `${API_BASE}/api/icd10/search?q=${encodeURIComponent(query)}`,
     { headers: authHeaders(token) },
   )
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
@@ -238,7 +300,7 @@ export async function createRealtimeSession(
       headers: authHeaders(token),
     },
   )
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
 }
 
@@ -253,6 +315,117 @@ export async function createTranscriptionSession(
       headers: authHeaders(token),
     },
   )
-  if (!response.ok) throw new Error(await parseError(response))
+  if (!response.ok) throw await parseError(response)
   return response.json()
+}
+
+// --- Admin ---
+
+export async function adminListEncounters(
+  token: string,
+  params: { provider_id?: number; from?: string; to?: string } = {},
+): Promise<{ encounters: AdminEncounterRow[] }> {
+  const qs = new URLSearchParams()
+  if (params.provider_id) qs.set('provider_id', String(params.provider_id))
+  if (params.from) qs.set('from', params.from)
+  if (params.to) qs.set('to', params.to)
+  const response = await fetch(
+    `${API_BASE}/api/admin/encounters?${qs.toString()}`,
+    { headers: authHeaders(token) },
+  )
+  if (!response.ok) throw await parseError(response)
+  return response.json()
+}
+
+export async function adminListProviders(
+  token: string,
+): Promise<{ providers: User[] }> {
+  const response = await fetch(`${API_BASE}/api/admin/providers`, {
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseError(response)
+  return response.json()
+}
+
+export async function adminCreateProvider(
+  token: string,
+  payload: { email: string; full_name: string; password: string },
+): Promise<User> {
+  const response = await fetch(`${API_BASE}/api/admin/providers`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw await parseError(response)
+  const data = await response.json()
+  return data.provider as User
+}
+
+export async function adminUpdateProvider(
+  token: string,
+  providerId: number,
+  payload: { full_name?: string; is_active?: boolean; password?: string },
+): Promise<User> {
+  const response = await fetch(`${API_BASE}/api/admin/providers/${providerId}`, {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw await parseError(response)
+  const data = await response.json()
+  return data.provider as User
+}
+
+export async function adminListTemplates(
+  token: string,
+): Promise<{ templates: NoteTemplate[] }> {
+  const response = await fetch(`${API_BASE}/api/admin/templates`, {
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseError(response)
+  return response.json()
+}
+
+export async function adminCreateTemplate(
+  token: string,
+  payload: Partial<NoteTemplate> & {
+    name: string
+    slug: string
+    system_prompt_addon: string
+  },
+): Promise<NoteTemplate> {
+  const response = await fetch(`${API_BASE}/api/admin/templates`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw await parseError(response)
+  const data = await response.json()
+  return data.template as NoteTemplate
+}
+
+export async function adminUpdateTemplate(
+  token: string,
+  templateId: number,
+  payload: Partial<NoteTemplate>,
+): Promise<NoteTemplate> {
+  const response = await fetch(`${API_BASE}/api/admin/templates/${templateId}`, {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw await parseError(response)
+  const data = await response.json()
+  return data.template as NoteTemplate
+}
+
+export async function adminDeleteTemplate(
+  token: string,
+  templateId: number,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/admin/templates/${templateId}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseError(response)
 }
