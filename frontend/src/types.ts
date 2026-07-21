@@ -40,8 +40,8 @@ export type NoteVersion = {
   id: number
   note_id: number
   version_number: number
-  snapshot: SoapNote
-  source: 'manual' | 'voice_session'
+  snapshot: SoapNote & { restored_from_version?: number }
+  source: 'manual' | 'voice_session' | 'revert'
   created_by: number
   created_by_name?: string | null
   created_at: string

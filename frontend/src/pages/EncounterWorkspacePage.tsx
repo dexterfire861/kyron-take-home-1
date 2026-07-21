@@ -5,6 +5,7 @@ import {
   getEncounter,
   getIcdSuggestions,
   listTemplates,
+  restoreNoteVersion,
   saveEncounterDraft,
   saveNote,
   searchIcdCodes,
@@ -126,6 +127,10 @@ export default function EncounterWorkspacePage() {
   const [accountDeactivated, setAccountDeactivated] = useState(false)
   const [draftSaving, setDraftSaving] = useState(false)
   const skipNextAutosave = useRef(true)
+  const [expandedVersionId, setExpandedVersionId] = useState<number | null>(null)
+  const [confirmRestoreId, setConfirmRestoreId] = useState<number | null>(null)
+  const [restoring, setRestoring] = useState(false)
+  const [restoreError, setRestoreError] = useState<string | null>(null)
 
   const { generate, streaming, error: streamError, setError: setStreamError } =
     useSoapStream(token)
@@ -465,6 +470,42 @@ export default function EncounterWorkspacePage() {
       }
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleRestoreVersion(version: NoteVersion) {
+    if (!token || !encounter) return
+    if (hasPendingProposal) {
+      setRestoreError('Confirm or reject pending voice edits before restoring.')
+      return
+    }
+    setRestoring(true)
+    setRestoreError(null)
+    try {
+      const result = await restoreNoteVersion(token, encounter.id, version.id)
+      const restored: SoapNote = {
+        subjective: result.note.subjective,
+        objective: result.note.objective,
+        assessment: result.note.assessment,
+        plan: result.note.plan,
+      }
+      setNote(restored)
+      savedSnapshotRef.current = restored
+      setDirty(false)
+      setDirtyFromVoice(false)
+      setSaveSource('manual')
+      setVersions((prev) => [result.version, ...prev])
+      setLastSavedAt(new Date())
+      setEncounter((prev) => (prev ? { ...prev, status: 'saved' } : prev))
+      setConfirmRestoreId(null)
+      setExpandedVersionId(result.version.id)
+      rejectAllProposals()
+    } catch (err) {
+      if (!handleAuthFailure(err)) {
+        setRestoreError(err instanceof Error ? err.message : 'Restore failed')
+      }
+    } finally {
+      setRestoring(false)
     }
   }
 
@@ -971,22 +1012,116 @@ export default function EncounterWorkspacePage() {
             </summary>
             <div className="disclosure-body">
               {versions.length === 0 ? (
-                <p className="empty">Saved versions will appear here.</p>
+                <p className="empty">Saved versions will appear here after you save a note.</p>
               ) : (
-                <ul className="version-list">
-                  {versions.map((v) => (
-                    <li key={v.id}>
-                      <strong>v{v.version_number}</strong>
-                      {' · '}
-                      {new Date(v.created_at).toLocaleString()}
-                      {' · '}
-                      <span className={`version-source version-source-${v.source}`}>
-                        {v.source === 'voice_session' ? 'voice' : 'manual'}
-                      </span>
-                      {v.created_by_name ? ` · ${v.created_by_name}` : ''}
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <p className="disclosure-hint">
+                    Open a version to review its SOAP content. Restore creates a new saved
+                    version from that snapshot.
+                  </p>
+                  {restoreError && (
+                    <p className="error" role="alert">
+                      {restoreError}
+                    </p>
+                  )}
+                  <ul className="version-list">
+                    {versions.map((v, index) => {
+                      const isExpanded = expandedVersionId === v.id
+                      const isConfirming = confirmRestoreId === v.id
+                      const isLatest = index === 0
+                      const sourceLabel =
+                        v.source === 'voice_session'
+                          ? 'voice'
+                          : v.source === 'revert'
+                            ? 'restore'
+                            : 'manual'
+                      const snap = v.snapshot
+                      return (
+                        <li
+                          key={v.id}
+                          className={`version-item${isExpanded ? ' expanded' : ''}${isLatest ? ' latest' : ''}`}
+                        >
+                          <button
+                            type="button"
+                            className="version-item-header"
+                            onClick={() =>
+                              setExpandedVersionId((prev) => (prev === v.id ? null : v.id))
+                            }
+                            aria-expanded={isExpanded}
+                          >
+                            <span className="version-item-title">
+                              <strong>v{v.version_number}</strong>
+                              {isLatest && <span className="version-latest-chip">current</span>}
+                              <span className={`version-source version-source-${v.source}`}>
+                                {sourceLabel}
+                              </span>
+                            </span>
+                            <span className="version-item-meta">
+                              {new Date(v.created_at).toLocaleString()}
+                              {v.created_by_name ? ` · ${v.created_by_name}` : ''}
+                              {typeof snap.restored_from_version === 'number'
+                                ? ` · from v${snap.restored_from_version}`
+                                : ''}
+                            </span>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="version-item-body">
+                              {SOAP_SECTIONS.map(({ key, label }) => (
+                                <div key={key} className="version-snap-section">
+                                  <span className="version-snap-label">{label}</span>
+                                  <p>{(snap[key] || '').trim() || '—'}</p>
+                                </div>
+                              ))}
+
+                              {!isLatest && (
+                                <div className="version-restore-row">
+                                  {isConfirming ? (
+                                    <>
+                                      <p className="version-restore-confirm">
+                                        Restore v{v.version_number}? This replaces the live note
+                                        and saves a new version.
+                                      </p>
+                                      <div className="version-restore-actions">
+                                        <button
+                                          type="button"
+                                          disabled={restoring || accountDeactivated}
+                                          onClick={() => void handleRestoreVersion(v)}
+                                        >
+                                          {restoring ? 'Restoring…' : 'Confirm restore'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="secondary"
+                                          disabled={restoring}
+                                          onClick={() => setConfirmRestoreId(null)}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="secondary small"
+                                      disabled={restoring || accountDeactivated}
+                                      onClick={() => {
+                                        setRestoreError(null)
+                                        setConfirmRestoreId(v.id)
+                                      }}
+                                    >
+                                      Restore this version
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </>
               )}
             </div>
           </details>

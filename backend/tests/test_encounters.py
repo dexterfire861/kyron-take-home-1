@@ -402,3 +402,64 @@ def test_list_note_versions_after_multiple_saves(
     )
     versions = response.get_json()["versions"]
     assert [v["version_number"] for v in versions] == [2, 1]
+
+
+def test_restore_note_version_creates_new_version_from_snapshot(
+    client, auth_headers, provider, make_patient, make_encounter
+):
+    encounter = make_encounter(provider, make_patient(provider))
+    v1 = client.put(
+        f"/api/encounters/{encounter.id}/note",
+        headers=auth_headers(provider),
+        json={
+            "subjective": "Original knee pain",
+            "objective": "Mild swelling",
+            "assessment": "Sprain",
+            "plan": "RICE",
+        },
+    ).get_json()
+    client.put(
+        f"/api/encounters/{encounter.id}/note",
+        headers=auth_headers(provider),
+        json={
+            "subjective": "Changed later",
+            "objective": "Worse swelling",
+            "assessment": "Possible tear",
+            "plan": "MRI",
+        },
+    )
+    version_id = v1["version"]["id"]
+
+    restore = client.post(
+        f"/api/encounters/{encounter.id}/versions/{version_id}/restore",
+        headers=auth_headers(provider),
+    )
+    assert restore.status_code == 200
+    body = restore.get_json()
+    assert body["note"]["subjective"] == "Original knee pain"
+    assert body["note"]["plan"] == "RICE"
+    assert body["version"]["version_number"] == 3
+    assert body["version"]["source"] == "revert"
+    assert body["version"]["snapshot"]["restored_from_version"] == 1
+    assert body["restored_from"]["version_number"] == 1
+
+    listed = client.get(
+        f"/api/encounters/{encounter.id}/versions", headers=auth_headers(provider)
+    )
+    assert [v["version_number"] for v in listed.get_json()["versions"]] == [3, 2, 1]
+
+
+def test_restore_unknown_version_returns_404(
+    client, auth_headers, provider, make_patient, make_encounter
+):
+    encounter = make_encounter(provider, make_patient(provider))
+    client.put(
+        f"/api/encounters/{encounter.id}/note",
+        headers=auth_headers(provider),
+        json={"subjective": "Only version"},
+    )
+    response = client.post(
+        f"/api/encounters/{encounter.id}/versions/999999/restore",
+        headers=auth_headers(provider),
+    )
+    assert response.status_code == 404

@@ -15,7 +15,7 @@ from soap_service import fetch_prior_notes, stream_soap_note
 encounters_bp = Blueprint("encounters", __name__, url_prefix="/api")
 
 VALID_INPUT_TYPES = {"transcript", "observations"}
-VALID_SAVE_SOURCES = {"manual", "voice_session"}
+VALID_SAVE_SOURCES = {"manual", "voice_session", "revert"}
 VALID_SUGGESTION_STATUSES = {"accepted", "rejected"}
 
 
@@ -345,6 +345,69 @@ def list_note_versions(encounter_id: int):
         for v in encounter.note.versions.order_by(NoteVersion.version_number.desc())
     ]
     return jsonify({"versions": versions})
+
+
+@encounters_bp.post("/encounters/<int:encounter_id>/versions/<int:version_id>/restore")
+@provider_required
+def restore_note_version(encounter_id: int, version_id: int):
+    """Restore a prior version's snapshot into the live note and record a new version."""
+    encounter = _get_owned_encounter(encounter_id)
+    if encounter is None:
+        return jsonify({"error": "Encounter not found"}), 404
+    if encounter.note is None:
+        return jsonify({"error": "No note to restore"}), 404
+
+    target = (
+        NoteVersion.query.filter_by(id=version_id, note_id=encounter.note.id)
+        .first()
+    )
+    if target is None:
+        return jsonify({"error": "Version not found"}), 404
+
+    snapshot = target.snapshot or {}
+    soap = {
+        "subjective": (snapshot.get("subjective") or "").strip(),
+        "objective": (snapshot.get("objective") or "").strip(),
+        "assessment": (snapshot.get("assessment") or "").strip(),
+        "plan": (snapshot.get("plan") or "").strip(),
+    }
+    if not any(soap.values()):
+        return jsonify({"error": "Selected version has no SOAP content"}), 400
+
+    note = encounter.note
+    note.subjective = soap["subjective"]
+    note.objective = soap["objective"]
+    note.assessment = soap["assessment"]
+    note.plan = soap["plan"]
+    note.updated_at = datetime.now(timezone.utc)
+
+    latest = (
+        NoteVersion.query.filter_by(note_id=note.id)
+        .order_by(NoteVersion.version_number.desc())
+        .first()
+    )
+    next_version = (latest.version_number + 1) if latest else 1
+    version = NoteVersion(
+        note_id=note.id,
+        version_number=next_version,
+        snapshot={
+            **dict(soap),
+            "restored_from_version": target.version_number,
+        },
+        source="revert",
+        created_by=g.current_user.id,
+    )
+    db.session.add(version)
+    encounter.status = "saved"
+    db.session.commit()
+
+    return jsonify(
+        {
+            "note": note.to_dict(),
+            "version": version.to_dict(),
+            "restored_from": target.to_dict(),
+        }
+    )
 
 
 @encounters_bp.post("/encounters/<int:encounter_id>/realtime/session")

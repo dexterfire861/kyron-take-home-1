@@ -236,6 +236,22 @@ export async function saveNote(
   return response.json()
 }
 
+export async function restoreNoteVersion(
+  token: string,
+  encounterId: number,
+  versionId: number,
+): Promise<{ note: Note; version: NoteVersion; restored_from: NoteVersion }> {
+  const response = await fetch(
+    `${API_BASE}/api/encounters/${encounterId}/versions/${versionId}/restore`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+    },
+  )
+  if (!response.ok) throw await parseError(response)
+  return response.json()
+}
+
 export async function suggestIcdCodes(
   token: string,
   encounterId: number,
