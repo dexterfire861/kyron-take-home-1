@@ -21,9 +21,27 @@ function extractFunctionArgs(event: Record<string, unknown>): string | null {
   if (typeof event.arguments === 'string') return event.arguments
   const item = event.item as Record<string, unknown> | undefined
   if (item && typeof item.arguments === 'string') return item.arguments
-  const delta = event.delta as string | undefined
-  if (typeof delta === 'string') return null
   return null
+}
+
+/** Realtime puts call_id on the event *or* nested under item — never invent one. */
+function resolveCallId(event: Record<string, unknown>): string | null {
+  if (typeof event.call_id === 'string' && event.call_id && event.call_id !== 'default') {
+    return event.call_id
+  }
+  const item = event.item as Record<string, unknown> | undefined
+  if (item && typeof item.call_id === 'string' && item.call_id && item.call_id !== 'default') {
+    return item.call_id
+  }
+  return null
+}
+
+function isActiveResponseError(message: string): boolean {
+  return /already has an active response/i.test(message)
+}
+
+function isBenignToolCallIdError(message: string): boolean {
+  return /tool call id ['"]?default['"]? not found/i.test(message)
 }
 
 export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHandlers) {
@@ -38,6 +56,11 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
   const callNameRef = useRef<Record<string, string>>({})
   const appliedCallIdsRef = useRef<Set<string>>(new Set())
   const transcriptBufferRef = useRef<Record<string, string>>({})
+  // Realtime rejects overlapping response.create calls. Tool-call "done"
+  // events often arrive *before* the parent response.done, so we must wait
+  // (or queue) before asking the model to continue after a function output.
+  const responseActiveRef = useRef(false)
+  const pendingResponseCreateRef = useRef(false)
 
   // The data channel is a long-lived imperative object whose `onmessage`
   // handler is only assigned once per `start()` call. Routing handler
@@ -50,6 +73,34 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
     handlersRef.current = handlers
   }, [handlers])
 
+  const flushPendingResponseCreate = useCallback(() => {
+    if (!pendingResponseCreateRef.current) return
+    if (responseActiveRef.current) return
+    const dc = dcRef.current
+    if (!dc || dc.readyState !== 'open') return
+    pendingResponseCreateRef.current = false
+    console.log(LOG_PREFIX, LOG_STYLE, 'flushing queued response.create')
+    responseActiveRef.current = true
+    dc.send(JSON.stringify({ type: 'response.create' }))
+  }, [])
+
+  const requestResponseCreate = useCallback(() => {
+    const dc = dcRef.current
+    if (!dc || dc.readyState !== 'open') return
+    if (responseActiveRef.current) {
+      pendingResponseCreateRef.current = true
+      console.log(
+        LOG_PREFIX,
+        LOG_STYLE,
+        'response still active — queued response.create for after response.done',
+      )
+      return
+    }
+    pendingResponseCreateRef.current = false
+    responseActiveRef.current = true
+    dc.send(JSON.stringify({ type: 'response.create' }))
+  }, [])
+
   const stop = useCallback(() => {
     dcRef.current?.close()
     pcRef.current?.close()
@@ -57,6 +108,8 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
     dcRef.current = null
     pcRef.current = null
     streamRef.current = null
+    responseActiveRef.current = false
+    pendingResponseCreateRef.current = false
     setStatus('idle')
   }, [])
 
@@ -89,13 +142,42 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
       const message =
         (err?.message as string | undefined) ?? 'Realtime API reported an error'
       console.error(LOG_PREFIX, LOG_STYLE, 'server error:', err ?? event)
+
+      // Recover from the common race: we asked for a follow-up response
+      // while the previous one was still finishing. Keep the tool output
+      // ack; just retry create after the active response ends.
+      if (isActiveResponseError(message)) {
+        responseActiveRef.current = true
+        pendingResponseCreateRef.current = true
+        // Cancel the stuck/overlapping create attempt if the API allows it,
+        // then wait for response.done to flush the queued create.
+        try {
+          dcRef.current?.send(JSON.stringify({ type: 'response.cancel' }))
+        } catch {
+          // ignore — cancel is best-effort
+        }
+        return
+      }
+
+      // Stale acks with a synthetic call_id — ignore; we no longer send these.
+      if (isBenignToolCallIdError(message)) {
+        console.warn(LOG_PREFIX, LOG_STYLE, 'ignoring stale tool-call-id error:', message)
+        return
+      }
+
       setError(message)
       return
     }
 
-    if (type === 'response.done') {
+    if (type === 'response.created') {
+      responseActiveRef.current = true
+      return
+    }
+
+    if (type === 'response.done' || type === 'response.cancelled') {
+      responseActiveRef.current = false
       const response = event.response as Record<string, unknown> | undefined
-      if (response?.status === 'failed') {
+      if (type === 'response.done' && response?.status === 'failed') {
         const statusDetails = response.status_details as
           | Record<string, unknown>
           | undefined
@@ -103,8 +185,11 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
         const message =
           (err?.message as string | undefined) ?? 'Response generation failed'
         console.error(LOG_PREFIX, LOG_STYLE, 'response failed:', statusDetails ?? response)
-        setError(message)
+        if (!isActiveResponseError(message)) {
+          setError(message)
+        }
       }
+      flushPendingResponseCreate()
       return
     }
 
@@ -138,11 +223,11 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
     // --- Tool call bookkeeping: the Realtime API announces a function call
     // via `response.output_item.added` before its arguments stream in, so
     // capture the tool name here (the later "done" events don't reliably
-    // include it) and key everything off call_id.
+    // include it) and key everything off the real call_id.
     if (type === 'response.output_item.added') {
       const item = event.item as Record<string, unknown> | undefined
       if (item?.type === 'function_call') {
-        const callId = String(item.call_id ?? '')
+        const callId = resolveCallId(event)
         const name = typeof item.name === 'string' ? item.name : ''
         if (callId && name) callNameRef.current[callId] = name
       }
@@ -150,7 +235,8 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
     }
 
     if (type === 'response.function_call_arguments.delta') {
-      const callId = String(event.call_id ?? 'default')
+      const callId = resolveCallId(event)
+      if (!callId) return
       const delta = typeof event.delta === 'string' ? event.delta : ''
       argBufferRef.current[callId] = (argBufferRef.current[callId] ?? '') + delta
       return
@@ -161,8 +247,28 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
       type === 'response.output_item.done' ||
       type === 'conversation.item.done'
     ) {
-      const callId = String(event.call_id ?? 'default')
       const item = event.item as Record<string, unknown> | undefined
+
+      // output_item.done / conversation.item.done also fire for text items —
+      // only continue for real function calls.
+      if (
+        type !== 'response.function_call_arguments.done' &&
+        item?.type !== 'function_call'
+      ) {
+        return
+      }
+
+      const callId = resolveCallId(event)
+      if (!callId) {
+        console.warn(
+          LOG_PREFIX,
+          LOG_STYLE,
+          'ignoring tool done event without call_id (would have been "default")',
+          type,
+          event,
+        )
+        return
+      }
 
       if (item?.type === 'function_call' && typeof item.name === 'string' && item.name) {
         callNameRef.current[callId] = item.name
@@ -175,21 +281,22 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
       if (!argsText) return
 
       // The Realtime API fires multiple "done"-style events for the same
-      // function call (function_call_arguments.done, output_item.done,
-      // conversation.item.done); only act on the first one per call_id.
+      // function call; only act on the first one per call_id.
       if (appliedCallIdsRef.current.has(callId)) {
         delete argBufferRef.current[callId]
         return
       }
 
       const toolName = callNameRef.current[callId] ?? 'apply_soap_edits'
-      console.log(LOG_PREFIX, LOG_STYLE, 'tool call:', toolName, argsText)
+      console.log(LOG_PREFIX, LOG_STYLE, 'tool call:', toolName, 'call_id=', callId, argsText)
 
       const ackAndRespond = (ackStatus: string) => {
-        // Tell the model the tool call was handled so it can respond out
-        // loud and continue the conversation. Without this ack the
-        // Realtime API leaves the tool call dangling and the assistant
-        // goes silent instead of responding.
+        // Tell the model the tool call was handled so it can continue.
+        // Without this ack the Realtime API leaves the tool call dangling.
+        // Do NOT send response.create while the parent response is still
+        // active — that produces "already has an active response in progress".
+        // Never ack with a synthetic call_id — API returns
+        // "Tool call ID 'default' not found in conversation."
         dcRef.current?.send(
           JSON.stringify({
             type: 'conversation.item.create',
@@ -200,7 +307,7 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
             },
           }),
         )
-        dcRef.current?.send(JSON.stringify({ type: 'response.create' }))
+        requestResponseCreate()
       }
 
       if (toolName === 'confirm_pending_edits') {
@@ -238,7 +345,7 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
           handlersRef.current.onProposeEdit(partial, args.assistant_summary)
           if (args.assistant_summary) setLastSummary(args.assistant_summary)
           ackAndRespond('proposed')
-          console.log(LOG_PREFIX, LOG_STYLE, 'sent function_call_output + response.create')
+          console.log(LOG_PREFIX, LOG_STYLE, 'sent function_call_output + queued/sent response.create')
         } else {
           console.warn(
             LOG_PREFIX,
@@ -253,7 +360,7 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
         delete argBufferRef.current[callId]
       }
     }
-  }, [])
+  }, [flushPendingResponseCreate, requestResponseCreate])
 
   const start = useCallback(
     async (encounterId: number) => {
@@ -267,6 +374,8 @@ export function useRealtimeVoice(token: string | null, handlers: RealtimeVoiceHa
       callNameRef.current = {}
       appliedCallIdsRef.current = new Set()
       transcriptBufferRef.current = {}
+      responseActiveRef.current = false
+      pendingResponseCreateRef.current = false
 
       try {
         const { client_secret, model } = await createRealtimeSession(
