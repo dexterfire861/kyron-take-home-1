@@ -1,10 +1,24 @@
-"""Seed demo users and note templates. Run: python seed.py"""
+"""Seed demo users, note templates, and a curated ICD-10 code subset.
+
+Run: python seed.py
+
+The ICD-10 seed embeds ~300 codes (backend/data/icd10_seed.csv) so a fresh
+clone has a working ICD-10 search out of the box. For the full CMS code list,
+run scripts/import_icd10.py against the official zip instead — both use the
+same idempotence guard (skip if icd10_codes already has rows), so seeding can
+never clobber a database that already holds the complete set.
+"""
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
+
 from app import create_app
 from db import db
-from models import NoteTemplate, User, utcnow
+from models import IcdCode, NoteTemplate, User, utcnow
+
+ICD_SEED_CSV = Path(__file__).resolve().parent / "data" / "icd10_seed.csv"
 
 SEED_USERS = [
     {
@@ -110,8 +124,36 @@ def seed() -> None:
             )
             print(f"created template: {item['slug']}")
 
+        seed_icd10_codes()
+
         db.session.commit()
         print("seed complete")
+
+
+def seed_icd10_codes() -> None:
+    """Load the curated ICD-10 subset, unless the table already has rows.
+
+    The guard mirrors scripts/import_icd10.py so this is safe to run against a
+    database that already holds the full CMS list (e.g. production) — it will
+    skip rather than replace the larger set with the ~300-code demo subset.
+    """
+    existing = IcdCode.query.count()
+    if existing:
+        print(f"skip ICD-10 seed: table already has {existing} rows")
+        return
+    if not ICD_SEED_CSV.exists():
+        print(f"skip ICD-10 seed: {ICD_SEED_CSV} not found")
+        return
+
+    with open(ICD_SEED_CSV, newline="") as f:
+        reader = csv.DictReader(f)
+        mappings = [
+            {"code": row["code"].strip(), "description": row["description"].strip()}
+            for row in reader
+            if row.get("code") and row.get("description")
+        ]
+    db.session.bulk_insert_mappings(IcdCode, mappings)
+    print(f"created {len(mappings)} ICD-10 codes from {ICD_SEED_CSV.name}")
 
 
 if __name__ == "__main__":

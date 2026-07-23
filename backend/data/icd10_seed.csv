@@ -1,0 +1,317 @@
+code,description
+M5450,"Low back pain, unspecified"
+M5451,Vertebrogenic low back pain
+M5459,Other low back pain
+M5416,"Radiculopathy, lumbar region"
+M542,Cervicalgia
+M546,Pain in thoracic spine
+M549,"Dorsalgia, unspecified"
+G43101,"Migraine with aura, not intractable, with status migrainosus"
+G43109,"Migraine with aura, not intractable, without status migrainosus"
+G43001,"Migraine without aura, not intractable, with status migrainosus"
+G43009,"Migraine without aura, not intractable, without status migrainosus"
+M2550,Pain in unspecified joint
+M2559,Pain in other specified joint
+M25511,Pain in right shoulder
+M25512,Pain in left shoulder
+M25519,Pain in unspecified shoulder
+M25521,Pain in right elbow
+M25522,Pain in left elbow
+M25529,Pain in unspecified elbow
+M25531,Pain in right wrist
+M25532,Pain in left wrist
+M25539,Pain in unspecified wrist
+M25541,Pain in joints of right hand
+M25542,Pain in joints of left hand
+M25549,Pain in joints of unspecified hand
+M25551,Pain in right hip
+M25552,Pain in left hip
+M25559,Pain in unspecified hip
+M25561,Pain in right knee
+M25562,Pain in left knee
+M25569,Pain in unspecified knee
+M170,Bilateral primary osteoarthritis of knee
+M172,Bilateral post-traumatic osteoarthritis of knee
+M174,Other bilateral secondary osteoarthritis of knee
+M175,Other unilateral secondary osteoarthritis of knee
+M179,"Osteoarthritis of knee, unspecified"
+M1710,"Unilateral primary osteoarthritis, unspecified knee"
+M1711,"Unilateral primary osteoarthritis, right knee"
+M1712,"Unilateral primary osteoarthritis, left knee"
+M160,Bilateral primary osteoarthritis of hip
+M162,Bilateral osteoarthritis resulting from hip dysplasia
+M164,Bilateral post-traumatic osteoarthritis of hip
+M166,Other bilateral secondary osteoarthritis of hip
+M167,Other unilateral secondary osteoarthritis of hip
+M169,"Osteoarthritis of hip, unspecified"
+M1909,"Primary osteoarthritis, other specified site"
+M1919,"Post-traumatic osteoarthritis, other specified site"
+M1929,"Secondary osteoarthritis, other specified site"
+M1990,"Unspecified osteoarthritis, unspecified site"
+M1991,"Primary osteoarthritis, unspecified site"
+M1992,"Post-traumatic osteoarthritis, unspecified site"
+M1993,"Secondary osteoarthritis, unspecified site"
+M19011,"Primary osteoarthritis, right shoulder"
+M7500,Adhesive capsulitis of unspecified shoulder
+M7501,Adhesive capsulitis of right shoulder
+M7502,Adhesive capsulitis of left shoulder
+M7520,"Bicipital tendinitis, unspecified shoulder"
+M7521,"Bicipital tendinitis, right shoulder"
+M7522,"Bicipital tendinitis, left shoulder"
+M7530,Calcific tendinitis of unspecified shoulder
+M7531,Calcific tendinitis of right shoulder
+M7532,Calcific tendinitis of left shoulder
+M7540,Impingement syndrome of unspecified shoulder
+M5400,"Panniculitis affecting regions of neck and back, site unspecified"
+M5401,"Panniculitis affecting regions of neck and back, occipito-atlanto-axial region"
+M5402,"Panniculitis affecting regions of neck and back, cervical region"
+M5403,"Panniculitis affecting regions of neck and back, cervicothoracic region"
+M5404,"Panniculitis affecting regions of neck and back, thoracic region"
+M5405,"Panniculitis affecting regions of neck and back, thoracolumbar region"
+M5406,"Panniculitis affecting regions of neck and back, lumbar region"
+M5407,"Panniculitis affecting regions of neck and back, lumbosacral region"
+M5408,"Panniculitis affecting regions of neck and back, sacral and sacrococcygeal region"
+M5409,"Panniculitis affecting regions, neck and back, multiple sites in spine"
+M5410,"Radiculopathy, site unspecified"
+M5411,"Radiculopathy, occipito-atlanto-axial region"
+M519,"Unspecified thoracic, thoracolumbar and lumbosacral intervertebral disc disorder"
+M5104,"Intervertebral disc disorders with myelopathy, thoracic region"
+M5105,"Intervertebral disc disorders with myelopathy, thoracolumbar region"
+M5106,"Intervertebral disc disorders with myelopathy, lumbar region"
+M5114,"Intervertebral disc disorders with radiculopathy, thoracic region"
+M5115,"Intervertebral disc disorders with radiculopathy, thoracolumbar region"
+M2340,"Loose body in knee, unspecified knee"
+M2341,"Loose body in knee, right knee"
+M2342,"Loose body in knee, left knee"
+M2350,"Chronic instability of knee, unspecified knee"
+M2351,"Chronic instability of knee, right knee"
+M2352,"Chronic instability of knee, left knee"
+M2390,Unspecified internal derangement of unspecified knee
+M2391,Unspecified internal derangement of right knee
+M778,"Other enthesopathies, not elsewhere classified"
+M779,"Enthesopathy, unspecified"
+M7700,"Medial epicondylitis, unspecified elbow"
+M7701,"Medial epicondylitis, right elbow"
+M7702,"Medial epicondylitis, left elbow"
+M7710,"Lateral epicondylitis, unspecified elbow"
+M790,"Rheumatism, unspecified"
+M792,"Neuralgia and neuritis, unspecified"
+M793,"Panniculitis, unspecified"
+M794,Hypertrophy of (infrapatellar) fat pad
+M795,Residual foreign body in soft tissue
+M797,Fibromyalgia
+M799,"Soft tissue disorder, unspecified"
+M7910,"Myalgia, unspecified site"
+S83001A,"Unspecified subluxation of right patella, initial encounter"
+S83001D,"Unspecified subluxation of right patella, subsequent encounter"
+S83001S,"Unspecified subluxation of right patella, sequela"
+S83002A,"Unspecified subluxation of left patella, initial encounter"
+S83002D,"Unspecified subluxation of left patella, subsequent encounter"
+S83002S,"Unspecified subluxation of left patella, sequela"
+S83003A,"Unspecified subluxation of unspecified patella, initial encounter"
+S83003D,"Unspecified subluxation of unspecified patella, subsequent encounter"
+S9301XA,"Subluxation of right ankle joint, initial encounter"
+S9301XD,"Subluxation of right ankle joint, subsequent encounter"
+S9301XS,"Subluxation of right ankle joint, sequela"
+S9302XA,"Subluxation of left ankle joint, initial encounter"
+S9302XD,"Subluxation of left ankle joint, subsequent encounter"
+S9302XS,"Subluxation of left ankle joint, sequela"
+S52001A,"Unspecified fracture of upper end of right ulna, initial encounter for closed fracture"
+S52001B,"Unspecified fracture of upper end of right ulna, initial encounter for open fracture type I or II"
+S52001C,"Unspecified fracture of upper end of right ulna, initial encounter for open fracture type IIIA, IIIB, or IIIC"
+S52001D,"Unspecified fracture of upper end of right ulna, subsequent encounter for closed fracture with routine healing"
+S52001E,"Unspecified fracture of upper end of right ulna, subsequent encounter for open fracture type I or II with routine healing"
+S52001F,"Unspecified fracture of upper end of right ulna, subsequent encounter for open fracture type IIIA, IIIB, or IIIC with routine healing"
+S52001G,"Unspecified fracture of upper end of right ulna, subsequent encounter for closed fracture with delayed healing"
+S52001H,"Unspecified fracture of upper end of right ulna, subsequent encounter for open fracture type I or II with delayed healing"
+S72001A,"Fracture of unspecified part of neck of right femur, initial encounter for closed fracture"
+S72001B,"Fracture of unspecified part of neck of right femur, initial encounter for open fracture type I or II"
+S72001C,"Fracture of unspecified part of neck of right femur, initial encounter for open fracture type IIIA, IIIB, or IIIC"
+S72001D,"Fracture of unspecified part of neck of right femur, subsequent encounter for closed fracture with routine healing"
+S72001E,"Fracture of unspecified part of neck of right femur, subsequent encounter for open fracture type I or II with routine healing"
+S72001F,"Fracture of unspecified part of neck of right femur, subsequent encounter for open fracture type IIIA, IIIB, or IIIC with routine healing"
+S42001A,"Fracture of unspecified part of right clavicle, initial encounter for closed fracture"
+S42001B,"Fracture of unspecified part of right clavicle, initial encounter for open fracture"
+S42001D,"Fracture of unspecified part of right clavicle, subsequent encounter for fracture with routine healing"
+S42001G,"Fracture of unspecified part of right clavicle, subsequent encounter for fracture with delayed healing"
+S42001K,"Fracture of unspecified part of right clavicle, subsequent encounter for fracture with nonunion"
+S42001P,"Fracture of unspecified part of right clavicle, subsequent encounter for fracture with malunion"
+S42001S,"Fracture of unspecified part of right clavicle, sequela"
+S42002A,"Fracture of unspecified part of left clavicle, initial encounter for closed fracture"
+E118,Type 2 diabetes mellitus with unspecified complications
+E119,Type 2 diabetes mellitus without complications
+E11A,Type 2 diabetes mellitus without complications in remission
+E1100,Type 2 diabetes mellitus with hyperosmolarity without nonketotic hyperglycemic-hyperosmolar coma (NKHHC)
+E1101,Type 2 diabetes mellitus with hyperosmolarity with coma
+E1110,Type 2 diabetes mellitus with ketoacidosis without coma
+E1111,Type 2 diabetes mellitus with ketoacidosis with coma
+E1121,Type 2 diabetes mellitus with diabetic nephropathy
+E1122,Type 2 diabetes mellitus with diabetic chronic kidney disease
+E1129,Type 2 diabetes mellitus with other diabetic kidney complication
+E1136,Type 2 diabetes mellitus with diabetic cataract
+E1139,Type 2 diabetes mellitus with other diabetic ophthalmic complication
+E1140,"Type 2 diabetes mellitus with diabetic neuropathy, unspecified"
+E1141,Type 2 diabetes mellitus with diabetic mononeuropathy
+E1142,Type 2 diabetes mellitus with diabetic polyneuropathy
+E1143,Type 2 diabetes mellitus with diabetic autonomic (poly)neuropathy
+E108,Type 1 diabetes mellitus with unspecified complications
+E109,Type 1 diabetes mellitus without complications
+E1010,Type 1 diabetes mellitus with ketoacidosis without coma
+E1011,Type 1 diabetes mellitus with ketoacidosis with coma
+E1021,Type 1 diabetes mellitus with diabetic nephropathy
+E1022,Type 1 diabetes mellitus with diabetic chronic kidney disease
+E781,Pure hyperglyceridemia
+E782,Mixed hyperlipidemia
+E783,Hyperchylomicronemia
+E785,"Hyperlipidemia, unspecified"
+E786,Lipoprotein deficiency
+E789,"Disorder of lipoprotein metabolism, unspecified"
+E030,Congenital hypothyroidism with diffuse goiter
+E031,Congenital hypothyroidism without goiter
+E032,Hypothyroidism due to medicaments and other exogenous substances
+E033,Postinfectious hypothyroidism
+E661,Drug-induced obesity
+E662,Morbid (severe) obesity with alveolar hypoventilation
+E663,Overweight
+E669,"Obesity, unspecified"
+E6601,Morbid (severe) obesity due to excess calories
+I10,Essential (primary) hypertension
+I110,Hypertensive heart disease with heart failure
+I119,Hypertensive heart disease without heart failure
+I252,Old myocardial infarction
+I253,Aneurysm of heart
+I255,Ischemic cardiomyopathy
+I256,Silent myocardial ischemia
+I259,"Chronic ischemic heart disease, unspecified"
+I2510,Atherosclerotic heart disease of native coronary artery without angina pectoris
+I480,Paroxysmal atrial fibrillation
+I483,Typical atrial flutter
+I484,Atypical atrial flutter
+I4811,Longstanding persistent atrial fibrillation
+I501,"Left ventricular failure, unspecified"
+I509,"Heart failure, unspecified"
+I5020,Unspecified systolic (congestive) heart failure
+I5021,Acute systolic (congestive) heart failure
+I5022,Chronic systolic (congestive) heart failure
+I5023,Acute on chronic systolic (congestive) heart failure
+J060,Acute laryngopharyngitis
+J069,"Acute upper respiratory infection, unspecified"
+J020,Streptococcal pharyngitis
+J028,Acute pharyngitis due to other specified organisms
+J029,"Acute pharyngitis, unspecified"
+J0300,"Acute streptococcal tonsillitis, unspecified"
+J0301,Acute recurrent streptococcal tonsillitis
+J0380,Acute tonsillitis due to other specified organisms
+J200,Acute bronchitis due to Mycoplasma pneumoniae
+J201,Acute bronchitis due to Hemophilus influenzae
+J202,Acute bronchitis due to streptococcus
+J203,Acute bronchitis due to coxsackievirus
+J204,Acute bronchitis due to parainfluenza virus
+J205,Acute bronchitis due to respiratory syncytial virus
+J180,"Bronchopneumonia, unspecified organism"
+J181,"Lobar pneumonia, unspecified organism"
+J182,"Hypostatic pneumonia, unspecified organism"
+J188,"Other pneumonia, unspecified organism"
+J440,Chronic obstructive pulmonary disease with (acute) lower respiratory infection
+J441,Chronic obstructive pulmonary disease with (acute) exacerbation
+J449,"Chronic obstructive pulmonary disease, unspecified"
+J4481,Bronchiolitis obliterans and bronchiolitis obliterans syndrome
+J4520,"Mild intermittent asthma, uncomplicated"
+J4521,Mild intermittent asthma with (acute) exacerbation
+J4522,Mild intermittent asthma with status asthmaticus
+J4530,"Mild persistent asthma, uncomplicated"
+J4531,Mild persistent asthma with (acute) exacerbation
+J4532,Mild persistent asthma with status asthmaticus
+J4540,"Moderate persistent asthma, uncomplicated"
+J4541,Moderate persistent asthma with (acute) exacerbation
+J300,Vasomotor rhinitis
+J301,Allergic rhinitis due to pollen
+J302,Other seasonal allergic rhinitis
+J305,Allergic rhinitis due to food
+K219,Gastro-esophageal reflux disease without esophagitis
+K2100,"Gastro-esophageal reflux disease with esophagitis, without bleeding"
+K2101,"Gastro-esophageal reflux disease with esophagitis, with bleeding"
+K591,Functional diarrhea
+K592,"Neurogenic bowel, not elsewhere classified"
+K594,Anal spasm
+K599,"Functional intestinal disorder, unspecified"
+K5900,"Constipation, unspecified"
+N390,"Urinary tract infection, site not specified"
+N393,Stress incontinence (female) (male)
+N398,Other specified disorders of urinary system
+N399,"Disorder of urinary system, unspecified"
+R100,Acute abdomen
+R109,Unspecified abdominal pain
+R1010,"Upper abdominal pain, unspecified"
+R1011,Right upper quadrant pain
+R1012,Left upper quadrant pain
+R1013,Epigastric pain
+R1020,Pelvic and perineal pain unspecified side
+R1021,Pelvic and perineal pain right side
+R510,"Headache with orthostatic component, not elsewhere classified"
+R519,"Headache, unspecified"
+R051,Acute cough
+R052,Subacute cough
+R053,Chronic cough
+R054,Cough syncope
+R070,Pain in throat
+R071,Chest pain on breathing
+R072,Precordial pain
+R079,"Chest pain, unspecified"
+R0781,Pleurodynia
+R0782,Intercostal pain
+R110,Nausea
+R112,"Nausea with vomiting, unspecified"
+R1110,"Vomiting, unspecified"
+R1111,Vomiting without nausea
+R42,Dizziness and giddiness
+R530,Neoplastic (malignant) related fatigue
+R531,Weakness
+R532,Functional quadriplegia
+R5381,Other malaise
+R502,Drug induced fever
+R509,"Fever, unspecified"
+R5081,Fever presenting with conditions classified elsewhere
+R600,Localized edema
+R601,Generalized edema
+R609,"Edema, unspecified"
+G43A0,"Cyclical vomiting, in migraine, not intractable"
+G43A1,"Cyclical vomiting, in migraine, intractable"
+G43B0,"Ophthalmoplegic migraine, not intractable"
+G43B1,"Ophthalmoplegic migraine, intractable"
+G43C0,"Periodic headache syndromes in child or adult, not intractable"
+G43C1,"Periodic headache syndromes in child or adult, intractable"
+G43D0,"Abdominal migraine, not intractable"
+G43D1,"Abdominal migraine, intractable"
+G478,Other sleep disorders
+G479,"Sleep disorder, unspecified"
+G4700,"Insomnia, unspecified"
+G4701,Insomnia due to medical condition
+G4709,Other insomnia
+G4710,"Hypersomnia, unspecified"
+F410,Panic disorder [episodic paroxysmal anxiety]
+F411,Generalized anxiety disorder
+F413,Other mixed anxiety disorders
+F418,Other specified anxiety disorders
+F419,"Anxiety disorder, unspecified"
+F320,"Major depressive disorder, single episode, mild"
+F321,"Major depressive disorder, single episode, moderate"
+F322,"Major depressive disorder, single episode, severe without psychotic features"
+F323,"Major depressive disorder, single episode, severe with psychotic features"
+F324,"Major depressive disorder, single episode, in partial remission"
+F325,"Major depressive disorder, single episode, in full remission"
+F330,"Major depressive disorder, recurrent, mild"
+F331,"Major depressive disorder, recurrent, moderate"
+F332,"Major depressive disorder, recurrent severe without psychotic features"
+F333,"Major depressive disorder, recurrent, severe with psychotic symptoms"
+S61001A,"Unspecified open wound of right thumb without damage to nail, initial encounter"
+S61001D,"Unspecified open wound of right thumb without damage to nail, subsequent encounter"
+S61001S,"Unspecified open wound of right thumb without damage to nail, sequela"
+S61002A,"Unspecified open wound of left thumb without damage to nail, initial encounter"
+S0100XA,"Unspecified open wound of scalp, initial encounter"
+S0100XD,"Unspecified open wound of scalp, subsequent encounter"
+S0100XS,"Unspecified open wound of scalp, sequela"
+S0101XA,"Laceration without foreign body of scalp, initial encounter"
+T148XXA,"Other injury of unspecified body region, initial encounter"
+T148XXD,"Other injury of unspecified body region, subsequent encounter"
+T148XXS,"Other injury of unspecified body region, sequela"
